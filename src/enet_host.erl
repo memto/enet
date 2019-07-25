@@ -7,7 +7,7 @@
 
 %% API
 -export([
-         start_link/3,
+         start_link/5,
          socket_options/0,
          give_socket/2,
          connect/4,
@@ -45,8 +45,8 @@
 %%% API
 %%%===================================================================
 
-start_link(Port, ConnectFun, Options) ->
-    gen_server:start_link(?MODULE, {Port, ConnectFun, Options}, []).
+start_link(Port, ConnectFun, CommpressFun, DecompressFun, Options) ->
+    gen_server:start_link(?MODULE, {Port, ConnectFun, CommpressFun, DecompressFun, Options}, []).
 
 socket_options() ->
     [binary, {active, false}, {reuseaddr, false}, {broadcast, true}].
@@ -84,8 +84,8 @@ get_channel_limit(Host) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init({AssignedPort, ConnectFun, Options}) ->
-    DecompressFun = {enet_compress, enet_range_coder_decompress, []},
+init({AssignedPort, ConnectFun, CommpressFun, DecompressFun, Options}) ->
+    % DecompressFun = {enet_compress, enet_range_coder_decompress, []},
 
     true = gproc:reg({n, l, {enet_host, AssignedPort}}),
     ChannelLimit =
@@ -117,7 +117,7 @@ init({AssignedPort, ConnectFun, Options}) ->
             %% A socket has already been opened on this port
             %% - The socket will be given to us later
             %%
-            {ok, #state{ connect_fun = ConnectFun, decompress_fun = DecompressFun }};
+            {ok, #state{ connect_fun = ConnectFun, compress_fun = CommpressFun, decompress_fun = DecompressFun }};
         {ok, Socket} ->
             %%
             %% We were able to open a new socket on this port
@@ -125,7 +125,7 @@ init({AssignedPort, ConnectFun, Options}) ->
             %% - Set it to active mode
             %%
             ok = inet:setopts(Socket, [{active, true}]),
-            {ok, #state{ connect_fun = ConnectFun, decompress_fun = DecompressFun, socket = Socket }}
+            {ok, #state{ connect_fun = ConnectFun, compress_fun = CommpressFun, decompress_fun = DecompressFun, socket = Socket }}
     end.
 
 

@@ -1,7 +1,7 @@
 -module(enet).
 
 -export([
-         start_host/3,
+         start_host/5,
          stop_host/1,
          connect_peer/4,
          await_connect/0,
@@ -25,13 +25,19 @@
 -spec start_host(Port :: port_number(),
                  ConnectFun :: mfa()
                              | fun((map()) -> {ok, pid()} | {error, term()}),
+                 CompressFun :: undifined
+                             | mfa()
+                             | fun((map()) -> {ok, pid()} | {error, term()}),
+                 DecompressFun :: undifined
+                             | mfa()
+                             | fun((map()) -> {ok, pid()} | {error, term()}),
                  Options :: [{atom(), term()}]) ->
                         {ok, port_number()} | {error, term()}.
 
-start_host(Port, ConnectFun, Options) ->
+start_host(Port, ConnectFun, CompressFun, DecompressFun, Options) ->
     {ok, Socket} = gen_udp:open(Port, enet_host:socket_options()),
     {ok, AssignedPort} = inet:port(Socket),
-    case enet_sup:start_host_supervisor(AssignedPort, ConnectFun, Options) of
+    case enet_sup:start_host_supervisor(AssignedPort, ConnectFun, CompressFun, DecompressFun, Options) of
         {error, Reason} -> {error, Reason};
         {ok, _HostSup} ->
             Host = gproc:where({n, l, {enet_host, AssignedPort}}),

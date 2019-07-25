@@ -3,7 +3,7 @@
 
 %% API
 -export([
-         start_link/3
+         start_link/5
         ]).
 
 %% Supervisor callbacks
@@ -14,15 +14,15 @@
 %%% API functions
 %%%===================================================================
 
-start_link(Port, ConnectFun, Options) ->
-    supervisor:start_link(?MODULE, [Port, ConnectFun, Options]).
+start_link(Port, ConnectFun, CommpressFun, DecompressFun, Options) ->
+    supervisor:start_link(?MODULE, [Port, ConnectFun, CommpressFun, DecompressFun, Options]).
 
 
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
 
-init([Port, ConnectFun, Options]) ->
+init([Port, ConnectFun, CommpressFun, DecompressFun, Options]) ->
     SupFlags = #{
       strategy => one_for_one,
       intensity => 1,
@@ -50,7 +50,7 @@ init([Port, ConnectFun, Options]) ->
              start => {
                        enet_host,
                        start_link,
-                       [Port, ConnectFun, Options]
+                       [Port, ConnectFun, CommpressFun, DecompressFun, Options]
                       },
              restart => permanent,
              shutdown => 2000,
