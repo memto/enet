@@ -13,8 +13,10 @@ create_enet_server() ->
                    Self ! PeerInfo,
                    {ok, Self}
                end,
-
-  {ok, Server}  = enet:start_host(ListeningPort, ConnectFun, [{peer_limit, 8}]),
+  CompressFun = undefined,
+  DecompressFun = {enet_compress, enet_range_coder_decompress, []},
+  % DecompressFun = undefined,
+  {ok, Server}  = enet:start_host(ListeningPort, ConnectFun, CompressFun, DecompressFun, [{peer_limit, 8}]),
 
   receive
       {enet, 0, #reliable{ data = Data1 }} ->
