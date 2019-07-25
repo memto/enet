@@ -11,7 +11,7 @@
         ]).
 
 
-enet_range_coder_compress(Payload) ->
+enet_range_coder_compress(_Payload) ->
   io:fwrite("enet_range_coder_compress ~n").
 
 
@@ -75,7 +75,7 @@ enet_range_coder_decompress_loop1(Context, Loop1Ctx, Payload, Output) ->
       Out2;
     _ ->
       Loop1Ctx_2 = L1Ctx2#enet_rc_dec_loop1{patch = Ctx2#enet_range_coder.predicted},
-      {Ctx_1, L1Ctx_1, Payload_1, Out_1} = enet_range_coder_decompress_loop1_bottom(Ctx2, Loop1Ctx_2, Payload2, Out2),
+      {Ctx_1, _L1Ctx_1, Payload_1, Out_1} = enet_range_coder_decompress_loop1_bottom(Ctx2, Loop1Ctx_2, Payload2, Out2),
       NewLoop1Ctx = #enet_rc_dec_loop1{
         subcontext = 0,
         symbol = 0,
@@ -260,9 +260,7 @@ enet_range_coder_decompress_loop1_bottom_loop1(Context, Loop1Ctx, Payload, Outpu
       SubcontextIdx == PatchIdx ->
         {Context, Loop1Ctx, Payload, Output};
       true ->
-        TmpPathSymbol = orddict:fetch(PatchIdx, Context#enet_range_coder.symbols),
         {Context_1, Loop1Ctx_1} = enet_context_encode(Context, Loop1Ctx, PatchIdx, ?ENET_SUBCONTEXT_SYMBOL_DELTA, 0),
-        TmpPathSymbol2 = orddict:fetch(PatchIdx, Context_1#enet_range_coder.symbols),
         Context_2 = if
           Loop1Ctx_1#enet_rc_dec_loop1.parent == -1 ->
             Context_1#enet_range_coder{predicted = Loop1Ctx_1#enet_rc_dec_loop1.symbol};
@@ -306,7 +304,7 @@ enet_range_coder_decompress_loop1_bottom_loop1(Context, Loop1Ctx, Payload, Outpu
   .
 
 
-enet_range_coder_decode(Context, Under, Count, Total, Payload) ->
+enet_range_coder_decode(Context, Under, Count, _Total, Payload) ->
   DecodeLow1 = to_uint32(Context#enet_range_coder.decodeLow + (Under * Context#enet_range_coder.decodeRange)),
   DecodeRange1 = to_uint32(Context#enet_range_coder.decodeRange * Count),
   Context1 = Context#enet_range_coder{decodeLow = DecodeLow1, decodeRange = DecodeRange1},
@@ -318,7 +316,7 @@ enet_range_coder_decode_loop1(Context, Payload) ->
   #enet_range_coder{
     decodeLow = DecodeLow1,
     decodeRange = DecodeRange1,
-    decodeCode = DecodeCode1
+    decodeCode = _DecodeCode1
   } = Context,
 
   {Context1, Break} = if
@@ -476,8 +474,8 @@ enet_context_encode_loop1(Context, Loop1Ctx, Update, Minimum) ->
           Context_1 = Context#enet_range_coder{symbols = Symbols__1},
           {Context_1, Loop1Ctx_1}
       end
-  end
-  .
+  end,
+  {Context1, Loop1Ctx1}.
 
 
 enet_context_decode(Context, Loop1Ctx, Update, Minimum, IsSubcontext, CreateRoot, CreateRight, CreateLeft) ->
