@@ -85,6 +85,8 @@ get_channel_limit(Host) ->
 %%%===================================================================
 
 init({AssignedPort, ConnectFun, Options}) ->
+    DecompressFun = {enet_compress, enet_range_coder_decompress, []},
+
     true = gproc:reg({n, l, {enet_host, AssignedPort}}),
     ChannelLimit =
         case lists:keyfind(channel_limit, 1, Options) of
@@ -115,7 +117,7 @@ init({AssignedPort, ConnectFun, Options}) ->
             %% A socket has already been opened on this port
             %% - The socket will be given to us later
             %%
-            {ok, #state{ connect_fun = ConnectFun }};
+            {ok, #state{ connect_fun = ConnectFun, decompress_fun = DecompressFun }};
         {ok, Socket} ->
             %%
             %% We were able to open a new socket on this port
@@ -123,7 +125,7 @@ init({AssignedPort, ConnectFun, Options}) ->
             %% - Set it to active mode
             %%
             ok = inet:setopts(Socket, [{active, true}]),
-            {ok, #state{ connect_fun = ConnectFun, socket = Socket }}
+            {ok, #state{ connect_fun = ConnectFun, decompress_fun = DecompressFun, socket = Socket }}
     end.
 
 
@@ -204,7 +206,7 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
     %%
     #state{
        socket = Socket,
-       decompress_fun = Decompress,
+       decompress_fun = DecompressFun,
        connect_fun = ConnectFun
       } = S,
     %% TODO: Replace call to enet_protocol_decode with binary pattern match.
@@ -218,8 +220,9 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
     Commands =
         case IsCompressed of
             0 -> Rest;
-            1 -> Decompress(Rest)
+            1 -> start_compressor(DecompressFun, Rest)
         end,
+
     LocalPort = get_port(self()),
     case RecipientPeerID of
         ?NULL_PEER_ID ->
@@ -292,3 +295,8 @@ start_peer(Peer = #enet_peer{ name = Ref }) ->
     {ok, Pid} = enet_peer_sup:start_peer(PeerSup, Peer),
     _Ref = gproc:monitor({n, l, {enet_peer, Ref}}),
     {ok, Pid}.
+
+start_compressor({Module, Fun, Args}, Payload) ->
+    erlang:apply(Module, Fun, Args ++ [Payload]);
+start_compressor(Fun, Payload) ->
+    Fun(Payload).
