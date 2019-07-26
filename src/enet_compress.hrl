@@ -26,7 +26,7 @@
           parent = 0
         }).
 
--record(enet_range_coder,
+-record(enet_rc_dec_vars,
         {
           symbols,
 
@@ -34,14 +34,13 @@
           decodeCode,
           decodeRange,
 
-          root,
           predicted,
           order,
           currentSymbol,
           nextSymbol
         }).
 
--record(enet_rc_dec_loop1,
+-record(enet_rc_dec_loop1_vars,
         {
           subcontext,
           symbol,

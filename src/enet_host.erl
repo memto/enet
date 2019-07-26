@@ -223,7 +223,7 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
     Commands =
         case IsCompressed of
             0 -> Rest;
-            1 -> start_compressor(DecompressFun, Rest)
+            1 -> start_compressor(DecompressFun, Context, Rest)
         end,
 
     LocalPort = get_port(self()),
@@ -299,7 +299,7 @@ start_peer(Peer = #enet_peer{ name = Ref }) ->
     _Ref = gproc:monitor({n, l, {enet_peer, Ref}}),
     {ok, Pid}.
 
-start_compressor({Module, Fun, Args}, Payload) ->
-    erlang:apply(Module, Fun, Args ++ [Payload]);
-start_compressor(Fun, Payload) ->
-    Fun(Payload).
+start_compressor({Module, Fun, Args}, Context, Payload) ->
+    erlang:apply(Module, Fun, [Context, Payload] ++ Args);
+start_compressor(Fun, Context, Payload) ->
+    Fun(Context, Payload).
