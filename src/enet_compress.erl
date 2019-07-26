@@ -6,9 +6,25 @@
 -include("enet_compress.hrl").
 
 -export([
+         enet_get_compressor/1,
          enet_range_coder_compress/1,
-         enet_range_coder_decompress/1
+         enet_range_coder_decompress/1,
+         enet_range_coder_destroy/1
         ]).
+
+
+enet_get_compressor(range_coder) ->
+  #enet_compressor {
+    context = enet_range_coder_create(),
+    compress = {enet_compress, enet_range_coder_compress, []},
+    decompress = {enet_compress, enet_range_coder_decompress, []},
+    destroy = {enet_compress, enet_range_coder_destroy, []}
+  }.
+
+
+enet_range_coder_create() ->
+  orddict:from_list([{Idx, #enet_symbol{}} || Idx <- lists:seq(0,4095)]).
+  % orddict:from_list([{Idx, #enet_symbol{}} || Idx <- lists:seq(0,4)]).
 
 
 enet_range_coder_compress(_Payload) ->
@@ -701,6 +717,9 @@ enet_range_coder_seed(Context, Payload) ->
   {Context#enet_range_coder{decodeCode = D5}, P5}.
 
 
+enet_range_coder_destroy(_Arg) -> ok.
+
+
 to_uint32(Val) ->
   to_uint(Val, 32).
 
@@ -715,3 +734,4 @@ to_uint(Val, Size) ->
       Val
   end
   .
+

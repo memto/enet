@@ -4,10 +4,11 @@
 -include("enet_peer.hrl").
 -include("enet_commands.hrl").
 -include("enet_protocol.hrl").
+-include("enet_compress.hrl").
 
 %% API
 -export([
-         start_link/5,
+         start_link/4,
          socket_options/0,
          give_socket/2,
          connect/4,
@@ -33,9 +34,8 @@
 -record(state,
         {
          socket,
-         compress_fun,
-         decompress_fun,
-         connect_fun
+         connect_fun,
+         compressor
         }).
 
 -define(NULL_PEER_ID, ?MAX_PEER_ID).
@@ -45,8 +45,8 @@
 %%% API
 %%%===================================================================
 
-start_link(Port, ConnectFun, CommpressFun, DecompressFun, Options) ->
-    gen_server:start_link(?MODULE, {Port, ConnectFun, CommpressFun, DecompressFun, Options}, []).
+start_link(Port, ConnectFun, Commpressor, Options) ->
+    gen_server:start_link(?MODULE, {Port, ConnectFun, Commpressor, Options}, []).
 
 socket_options() ->
     [binary, {active, false}, {reuseaddr, false}, {broadcast, true}].
@@ -84,9 +84,7 @@ get_channel_limit(Host) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init({AssignedPort, ConnectFun, CommpressFun, DecompressFun, Options}) ->
-    % DecompressFun = {enet_compress, enet_range_coder_decompress, []},
-
+init({AssignedPort, ConnectFun, Commpressor, Options}) ->
     true = gproc:reg({n, l, {enet_host, AssignedPort}}),
     ChannelLimit =
         case lists:keyfind(channel_limit, 1, Options) of
@@ -117,7 +115,7 @@ init({AssignedPort, ConnectFun, CommpressFun, DecompressFun, Options}) ->
             %% A socket has already been opened on this port
             %% - The socket will be given to us later
             %%
-            {ok, #state{ connect_fun = ConnectFun, compress_fun = CommpressFun, decompress_fun = DecompressFun }};
+            {ok, #state{ connect_fun = ConnectFun, compressor = Commpressor }};
         {ok, Socket} ->
             %%
             %% We were able to open a new socket on this port
@@ -125,7 +123,7 @@ init({AssignedPort, ConnectFun, CommpressFun, DecompressFun, Options}) ->
             %% - Set it to active mode
             %%
             ok = inet:setopts(Socket, [{active, true}]),
-            {ok, #state{ connect_fun = ConnectFun, compress_fun = CommpressFun, decompress_fun = DecompressFun, socket = Socket }}
+            {ok, #state{ connect_fun = ConnectFun, compressor = Commpressor, socket = Socket }}
     end.
 
 
@@ -206,8 +204,13 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
     %%
     #state{
        socket = Socket,
-       decompress_fun = DecompressFun,
-       connect_fun = ConnectFun
+       connect_fun = ConnectFun,
+       compressor = #enet_compressor{
+        context = Context,
+        compress = _CompressFun,
+        decompress = DecompressFun,
+        destroy = _DestroyFun
+       }
       } = S,
     %% TODO: Replace call to enet_protocol_decode with binary pattern match.
     {ok,

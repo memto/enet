@@ -13,10 +13,11 @@ create_enet_server() ->
                    Self ! PeerInfo,
                    {ok, Self}
                end,
-  CompressFun = undefined,
-  DecompressFun = {enet_compress, enet_range_coder_decompress, []},
-  % DecompressFun = undefined,
-  {ok, Server}  = enet:start_host(ListeningPort, ConnectFun, CompressFun, DecompressFun, [{peer_limit, 8}]),
+
+  Compressor = enet_compress:enet_get_compressor(range_coder),
+  % io:fwrite("Compressor ~w ~n", [Compressor]),
+
+  {ok, Server}  = enet:start_host(ListeningPort, ConnectFun, Compressor, [{peer_limit, 8}]),
 
   receive
       {enet, 0, #reliable{ data = Data1 }} ->

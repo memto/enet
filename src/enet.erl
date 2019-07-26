@@ -1,7 +1,9 @@
 -module(enet).
 
+-include("enet_compress.hrl").
+
 -export([
-         start_host/5,
+         start_host/4,
          stop_host/1,
          connect_peer/4,
          await_connect/0,
@@ -16,7 +18,7 @@
         ]).
 
 -type port_number() :: 0..65535.
-
+-type enet_compressor() :: #enet_compressor{}.
 
 %%%===================================================================
 %%% API
@@ -25,19 +27,14 @@
 -spec start_host(Port :: port_number(),
                  ConnectFun :: mfa()
                              | fun((map()) -> {ok, pid()} | {error, term()}),
-                 CompressFun :: undifined
-                             | mfa()
-                             | fun((map()) -> {ok, pid()} | {error, term()}),
-                 DecompressFun :: undifined
-                             | mfa()
-                             | fun((map()) -> {ok, pid()} | {error, term()}),
+                 Compressor :: enet_compressor(),
                  Options :: [{atom(), term()}]) ->
                         {ok, port_number()} | {error, term()}.
 
-start_host(Port, ConnectFun, CompressFun, DecompressFun, Options) ->
+start_host(Port, ConnectFun, Compressor, Options) ->
     {ok, Socket} = gen_udp:open(Port, enet_host:socket_options()),
     {ok, AssignedPort} = inet:port(Socket),
-    case enet_sup:start_host_supervisor(AssignedPort, ConnectFun, CompressFun, DecompressFun, Options) of
+    case enet_sup:start_host_supervisor(AssignedPort, ConnectFun, Compressor, Options) of
         {error, Reason} -> {error, Reason};
         {ok, _HostSup} ->
             Host = gproc:where({n, l, {enet_host, AssignedPort}}),

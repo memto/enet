@@ -1,6 +1,21 @@
 # enet
 A complete re-implementation of the [ENet](http://enet.bespin.org/) protocol in Erlang/OTP.
 
+
+## build and run
+### build
+```
+rebar3 deps
+rebar3 as test shell
+```
+
+### run
+```
+c("test/enet_server.erl").
+enet_server:create_enet_server().
+```
+
+
 ## API
 The module `enet` presents the API of enet.
 
