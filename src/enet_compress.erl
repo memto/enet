@@ -27,8 +27,111 @@ enet_range_coder_create() ->
   % orddict:from_list([{Idx, #enet_symbol{}} || Idx <- lists:seq(0,4)]).
 
 
-enet_range_coder_compress(_Context, _Payload) ->
-  io:fwrite("enet_range_coder_compress ~n").
+enet_range_coder_compress(Context, Payload) ->
+  io:fwrite("enet_range_coder_compress ~n"),
+    EnetRcCompVars = #enet_rc_comp_vars{
+    encodeLow = 0,
+    encodeRange = ?MAX_UINT32,
+
+    predicted = 0,
+    order = 0,
+    nextSymbol = 0
+  },
+
+  % {Context1, EnetRcCompVars1} = enet_context_create(Context, EnetRcCompVars, ?ENET_CONTEXT_ESCAPE_MINIMUM, ?ENET_CONTEXT_SYMBOL_MINIMUM),
+  % Commands = do_enet_range_coder_compress(EnetRcCompVars1, Payload),
+
+  % Commands.
+  ok.
+
+do_enet_range_coder_compress(Context, EnetRcCompVars, Payload) ->
+  % Maybe somthing here to handle this
+  % inData = (const enet_uint8 *) inBuffers -> data;
+  % inEnd = & inData [inBuffers -> dataLength];
+  % inBuffers ++;
+  % inBufferCount --;
+
+  EnetRcCompLoop1Vars = #enet_rc_dec_loop1_vars{
+    subcontext = 0,
+    symbol = 0,
+    patch = 0,
+
+    value = 0,
+    code = 0,
+    under = 0,
+    count = 0,
+    bottom = 0,
+    parent = -1,
+    total = 0,
+
+    decodeNode = 0,
+    encodeNode = 0
+  },
+
+  enet_range_coder_compress_loop1(Context, EnetRcCompVars, EnetRcCompLoop1Vars, Payload, <<>>),
+
+  % Maybe somthing here to handle this
+  % ENET_RANGE_CODER_FLUSH;
+  ok.
+
+
+enet_range_coder_compress_loop1(Context, EnetRcCompVars, EnetRcCompLoop1Vars, Payload, Output) ->
+  % enet_range_coder_compress_loop1_top,
+  % enet_range_coder_compress_loop1_middle,
+  % enet_range_coder_compress_loop1_bottom
+  ok.
+
+enet_range_coder_compress_loop1_top(Context, EnetRcCompVars, EnetRcCompLoop1Vars, Payload, Output) ->
+  ok.
+
+enet_range_coder_compress_loop1_middle(Context, EnetRcCompVars, EnetRcCompLoop1Vars, Payload, Output) ->
+  % enet_range_coder_compress_loop1_middle_loop1
+
+  % ENET_CONTEXT_ENCODE (root, symbol, value, under, count, ENET_CONTEXT_SYMBOL_DELTA, ENET_CONTEXT_SYMBOL_MINIMUM);
+  % * parent = symbol - rangeCoder -> symbols;
+  % parent = & symbol -> parent;
+  % total = root -> total;
+  % ENET_RANGE_CODER_ENCODE (root -> escapes + under, count, total);
+  % root -> total += ENET_CONTEXT_SYMBOL_DELTA;
+  % if (count > 0xFF - 2*ENET_CONTEXT_SYMBOL_DELTA + ENET_CONTEXT_SYMBOL_MINIMUM || root -> total > ENET_RANGE_CODER_BOTTOM - 0x100)
+  %   ENET_CONTEXT_RESCALE (root, ENET_CONTEXT_SYMBOL_MINIMUM);
+  ok.
+
+enet_range_coder_compress_loop1_middle_loop1(Context, EnetRcCompVars, EnetRcCompLoop1Vars, Payload, Output) ->
+    % for (subcontext = & rangeCoder -> symbols [predicted];
+    %      subcontext != root;
+    %         subcontext = & rangeCoder -> symbols [subcontext -> parent])
+    % {
+    %     ENET_CONTEXT_ENCODE (subcontext, symbol, value, under, count, ENET_SUBCONTEXT_SYMBOL_DELTA, 0);
+    %     * parent = symbol - rangeCoder -> symbols;
+    %     parent = & symbol -> parent;
+    %     total = subcontext -> total;
+    %     if (count > 0)
+    %     {
+    %         ENET_RANGE_CODER_ENCODE (subcontext -> escapes + under, count, total);
+    %     }
+    %     else
+    %     {
+    %         if (subcontext -> escapes > 0 && subcontext -> escapes < total)
+    %             ENET_RANGE_CODER_ENCODE (0, subcontext -> escapes, total);
+    %         subcontext -> escapes += ENET_SUBCONTEXT_ESCAPE_DELTA;
+    %         subcontext -> total += ENET_SUBCONTEXT_ESCAPE_DELTA;
+    %     }
+    %     subcontext -> total += ENET_SUBCONTEXT_SYMBOL_DELTA;
+    %     if (count > 0xFF - 2*ENET_SUBCONTEXT_SYMBOL_DELTA || subcontext -> total > ENET_RANGE_CODER_BOTTOM - 0x100)
+    %       ENET_CONTEXT_RESCALE (subcontext, 0);
+    %     if (count > 0) goto nextInput;
+    % }
+    ok.
+
+enet_range_coder_compress_loop1_bottom(Context, EnetRcCompVars, EnetRcCompLoop1Vars, Payload, Output) ->
+    % nextInput:
+    %     if (order >= ENET_SUBCONTEXT_ORDER)
+    %       predicted = rangeCoder -> symbols [predicted].parent;
+    %     else
+    %       order ++;
+    %     ENET_RANGE_CODER_FREE_SYMBOLS;
+  ok.
 
 
 enet_range_coder_decompress(Context, Payload) ->

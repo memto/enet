@@ -40,6 +40,17 @@
           nextSymbol
         }).
 
+-record(enet_rc_comp_vars,
+        {
+          encodeLow,
+          encodeRange,
+
+          predicted,
+          order,
+          currentSymbol,
+          nextSymbol
+        }).
+
 -record(enet_rc_dec_loop1_vars,
         {
           subcontext,
