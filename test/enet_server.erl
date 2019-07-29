@@ -19,32 +19,54 @@ create_enet_server() ->
 
   {ok, Server}  = enet:start_host(ListeningPort, ConnectFun, Compressor, [{peer_limit, 8}]),
 
+  {ConnectID, LocalChannels} =
+    receive
+        #{peer := LocalPeer, channels := LCs, connect_id := C} -> {C, LCs}
+    after 50000 ->
+          ok = enet:stop_host(Server),
+          exit(local_peer_did_not_notify_worker)
+    end,
+
+  io:fwrite("ConnectID: ~w, LocalChannels: ~w ~n", [ConnectID, LocalChannels]),
+
+  {ok, LocalChannel1}  = maps:find(0, LocalChannels),
+  ok = enet:send_reliable(LocalChannel1, <<"I AM SERVER">>),
+
   receive
-      {enet, 0, #reliable{ data = Data1 }} ->
-      io:fwrite("receive: [~s] ~n", [Data1]),
+      Evt ->
+      io:fwrite("receive: [~w] ~n", [Evt]),
       ok
   after 50000 ->
           ok = enet:stop_host(Server),
           exit(remote_channel_did_not_send_data_to_worker)
   end,
 
-  receive
-      {enet, 0, #reliable{ data = Data2 }} ->
-      io:fwrite("receive: [~s] ~n", [Data2]),
-      ok
-  after 50000 ->
-          ok = enet:stop_host(Server),
-          exit(remote_channel_did_not_send_data_to_worker)
-  end,
+  % receive
+  %     {enet, 0, #reliable{ data = Data1 }} ->
+  %     io:fwrite("receive: [~s] ~n", [Data1]),
+  %     ok
+  % after 50000 ->
+  %         ok = enet:stop_host(Server),
+  %         exit(remote_channel_did_not_send_data_to_worker)
+  % end,
 
-  receive
-      {enet, 0, #reliable{ data = Data3 }} ->
-      io:fwrite("receive: [~s] ~n", [Data3]),
-      ok
-  after 50000 ->
-          ok = enet:stop_host(Server),
-          exit(remote_channel_did_not_send_data_to_worker)
-  end,
+  % receive
+  %     {enet, 0, #reliable{ data = Data2 }} ->
+  %     io:fwrite("receive: [~s] ~n", [Data2]),
+  %     ok
+  % after 50000 ->
+  %         ok = enet:stop_host(Server),
+  %         exit(remote_channel_did_not_send_data_to_worker)
+  % end,
+
+  % receive
+  %     {enet, 0, #reliable{ data = Data3 }} ->
+  %     io:fwrite("receive: [~s] ~n", [Data3]),
+  %     ok
+  % after 50000 ->
+  %         ok = enet:stop_host(Server),
+  %         exit(remote_channel_did_not_send_data_to_worker)
+  % end,
 
   ok = enet:stop_host(Server).
 

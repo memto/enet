@@ -271,7 +271,7 @@ connecting(enter, _OldState, S) ->
     CBin = enet_protocol_encode:command(ConnectC),
     Data = [HBin, CBin],
     {sent_time, SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, IP, Port),
+        enet_host:send_outgoing_commands(Host, Data, IP, ConnectID, Port),
     ChannelID = 16#FF,
     ConnectTimeout =
         make_resend_timer(
@@ -359,7 +359,7 @@ acknowledging_connect(cast, {incoming_command, {_H, C = #connect{}}}, S) ->
     CBin = enet_protocol_encode:command(VCC),
     Data = [HBin, CBin],
     {sent_time, SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID, RemotePeerID),
     ChannelID = 16#FF,
     VerifyConnectTimeout =
         make_resend_timer(
@@ -665,6 +665,7 @@ connected(cast, {outgoing_command, {H, C = #unsequenced{}}}, S) ->
        host = Host,
        ip = IP,
        port = Port,
+       connect_id = ConnectID,
        remote_peer_id = RemotePeerID,
        outgoing_unsequenced_group = Group
       } = S,
@@ -673,7 +674,7 @@ connected(cast, {outgoing_command, {H, C = #unsequenced{}}}, S) ->
     CBin = enet_protocol_encode:command(C1),
     Data = [HBin, CBin],
     {sent_time, _SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID, RemotePeerID),
     NewS = S#state{ outgoing_unsequenced_group = Group + 1 },
     SendTimeout = reset_send_timer(),
     {keep_state, NewS, [SendTimeout]};
@@ -689,13 +690,14 @@ connected(cast, {outgoing_command, {H, C = #unreliable{}}}, S) ->
        host = Host,
        ip = IP,
        port = Port,
+       connect_id = ConnectID,
        remote_peer_id = RemotePeerID
       } = S,
     HBin = enet_protocol_encode:command_header(H),
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
     {sent_time, _SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID, RemotePeerID),
     SendTimeout = reset_send_timer(),
     {keep_state, S, [SendTimeout]};
 
@@ -710,6 +712,7 @@ connected(cast, {outgoing_command, {H, C = #reliable{}}}, S) ->
        host = Host,
        ip = IP,
        port = Port,
+       connect_id = ConnectID,
        remote_peer_id = RemotePeerID
       } = S,
     #command_header{
@@ -720,7 +723,7 @@ connected(cast, {outgoing_command, {H, C = #reliable{}}}, S) ->
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
     {sent_time, SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID, RemotePeerID),
     SendReliableTimeout =
         make_resend_timer(
           ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
@@ -738,13 +741,14 @@ connected(cast, disconnect, State) ->
        host = Host,
        ip = IP,
        port = Port,
+       connect_id = ConnectID,
        remote_peer_id = RemotePeerID
       } = State,
     {H, C} = enet_command:sequenced_disconnect(),
     HBin = enet_protocol_encode:command_header(H),
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
-    enet_host:send_outgoing_commands(Host, Data, IP, Port, RemotePeerID),
+    enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID, RemotePeerID),
     {next_state, disconnecting, State};
 
 connected(cast, disconnect_now, State) ->
@@ -768,9 +772,10 @@ connected({timeout, {ChannelID, SentTime, SequenceNr}}, Data, S) ->
        host = Host,
        ip = IP,
        port = Port,
+       connect_id = ConnectID,
        remote_peer_id = RemotePeerID
       } = S,
-    enet_host:send_outgoing_commands(Host, Data, IP, Port, RemotePeerID),
+    enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID, RemotePeerID),
     NewTimeout =
         make_resend_timer(
           ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
@@ -796,6 +801,7 @@ connected({timeout, send}, ping, S) ->
        host = Host,
        ip = IP,
        port = Port,
+       connect_id = ConnectID,
        remote_peer_id = RemotePeerID
       } = S,
     {H, C} = enet_command:ping(),
@@ -803,7 +809,7 @@ connected({timeout, send}, ping, S) ->
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
     {sent_time, _SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID, RemotePeerID),
     SendTimeout = reset_send_timer(),
     {keep_state, S, [SendTimeout]};
 
@@ -876,7 +882,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
     %% - Split and decode the commands from the binary
     %% - Send the commands as individual events to ourselves
     %%
-    #state{ host = Host, port = Port } = S,
+    #state{ host = Host, port = Port, connect_id = ConnectID } = S,
     {ok, Commands} = enet_protocol_decode:commands(Packet),
     lists:foreach(
       fun ({H = #command_header{ please_acknowledge = 0 }, C}) ->
@@ -904,7 +910,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
                   end,
               {sent_time, _AckSentTime} =
                   enet_host:send_outgoing_commands(
-                    Host, [HBin, CBin], FromIP, Port, RemotePeerID),
+                    Host, [HBin, CBin], FromIP, Port, ConnectID, RemotePeerID),
               gen_statem:cast(self(), {incoming_command, {H, C}})
       end,
       Commands),

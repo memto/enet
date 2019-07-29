@@ -12,8 +12,8 @@
          socket_options/0,
          give_socket/2,
          connect/4,
-         send_outgoing_commands/4,
          send_outgoing_commands/5,
+         send_outgoing_commands/6,
          get_port/1,
          get_incoming_bandwidth/1,
          get_outgoing_bandwidth/1,
@@ -40,6 +40,7 @@
 
 -define(NULL_PEER_ID, ?MAX_PEER_ID).
 
+-define(CRC32, true).
 
 %%%===================================================================
 %%% API
@@ -58,11 +59,11 @@ give_socket(Host, Socket) ->
 connect(Host, IP, Port, ChannelCount) ->
     gen_server:call(Host, {connect, IP, Port, ChannelCount}).
 
-send_outgoing_commands(Host, Commands, IP, Port) ->
-    send_outgoing_commands(Host, Commands, IP, Port, ?NULL_PEER_ID).
+send_outgoing_commands(Host, Commands, IP, Port, ConnectID) ->
+    send_outgoing_commands(Host, Commands, IP, Port, ConnectID, ?NULL_PEER_ID).
 
-send_outgoing_commands(Host, Commands, IP, Port, PeerID) ->
-    gen_server:call(Host, {send_outgoing_commands, Commands, IP, Port, PeerID}).
+send_outgoing_commands(Host, Commands, IP, Port, ConnectID, PeerID) ->
+    gen_server:call(Host, {send_outgoing_commands, Commands, IP, Port, ConnectID, PeerID}).
 
 get_port(Host) ->
     gproc:get_value({p, l, port}, Host).
@@ -159,7 +160,7 @@ handle_call({connect, IP, Port, Channels}, _From, S) ->
         end,
     {reply, Reply, S};
 
-handle_call({send_outgoing_commands, Commands, IP, Port, ID}, _From, S) ->
+handle_call({send_outgoing_commands, Commands, IP, Port, ConnectID, ID}, _From, S) ->
     %%
     %% Received outgoing commands from a peer.
     %%
@@ -168,12 +169,36 @@ handle_call({send_outgoing_commands, Commands, IP, Port, ID}, _From, S) ->
     %% - Send the packet
     %% - Return sent time
     %%
+
     SentTime = get_time(),
     PH = #protocol_header{
-            peer_id = ID,
-            sent_time = SentTime
-           },
-    Packet = [enet_protocol_encode:protocol_header(PH), Commands],
+                peer_id = ID,
+                sent_time = SentTime
+               },
+    PH_Checksum = case ?CRC32 of
+      false ->
+        enet_protocol_encode:protocol_header(PH);
+      true ->
+        PHBin = enet_protocol_encode:protocol_header(PH),
+        CommandsBin = case is_list(Commands) of
+          true ->
+            binary:list_to_bin(Commands);
+          false ->
+            Commands
+        end,
+
+        Payload = case ConnectID of
+          undefined ->
+            <<PHBin/binary, 0:32, CommandsBin/binary>>;
+          _ ->
+            <<PHBin/binary, ConnectID:32, CommandsBin/binary>>
+        end,
+
+        Checksum = erlang:crc32(Payload),
+        <<PHBin/binary, Checksum:32>>
+    end,
+
+    Packet = [PH_Checksum, Commands],
     ok = gen_udp:send(S#state.socket, IP, Port, Packet),
     {reply, {sent_time, SentTime}, S}.
 
@@ -213,13 +238,23 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
        }
       } = S,
     %% TODO: Replace call to enet_protocol_decode with binary pattern match.
+
     {ok,
      #protocol_header{
         compressed = IsCompressed,
         peer_id = RecipientPeerID,
         sent_time = SentTime
        },
-     Rest} = enet_protocol_decode:protocol_header(Packet),
+     Rest1} = enet_protocol_decode:protocol_header(Packet),
+
+    Rest = case ?CRC32 of
+      false ->
+        Rest1;
+      true ->
+        <<_:32, Rest2/binary>> = Rest1,
+        Rest2
+    end,
+
     Commands =
         case IsCompressed of
             0 -> Rest;
