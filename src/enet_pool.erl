@@ -36,10 +36,10 @@ start_link(Port, PeerLimit) ->
     gen_server:start_link(?MODULE, [Port, PeerLimit], []).
 
 add_peer(Port, Name) ->
-    gproc_pool:add_worker(Port, Name).
+    gproc_pool:add_worker(Port, Name) - 1.
 
 pick_peer(Port, PeerID) ->
-    gproc_pool:pick_worker(Port, PeerID).
+    gproc_pool:pick_worker(Port, PeerID+1).
 
 remove_peer(Port, Name) ->
     gproc_pool:remove_worker(Port, Name).

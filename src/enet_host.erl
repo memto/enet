@@ -175,6 +175,7 @@ handle_call({send_outgoing_commands, Commands, IP, Port, ConnectID, ID}, _From, 
                 peer_id = ID,
                 sent_time = SentTime
                },
+
     PH_Checksum = case ?CRC32 of
       false ->
         enet_protocol_encode:protocol_header(PH);
@@ -187,10 +188,11 @@ handle_call({send_outgoing_commands, Commands, IP, Port, ConnectID, ID}, _From, 
             Commands
         end,
 
-        Payload = case ConnectID of
-          undefined ->
+        Payload =
+        if
+          (ID >= ?NULL_PEER_ID) or (ConnectID == undefined) ->
             <<PHBin/binary, 0:32, CommandsBin/binary>>;
-          _ ->
+          true ->
             <<PHBin/binary, ConnectID:32, CommandsBin/binary>>
         end,
 
@@ -227,6 +229,9 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
     %% - Decompress the remaining packet if necessary
     %% - Send the packet to the peer (ID in protocol header)
     %%
+
+    UDPTime = erlang:system_time(1000),
+
     #state{
        socket = Socket,
        connect_fun = ConnectFun,
@@ -279,6 +284,8 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
                               connect_fun = ConnectFun
                              },
                     {ok, Pid} = start_peer(Peer),
+                    ToPeerTime1 = erlang:system_time(1000),
+                    io:fwrite("UDPTime = ~w ~n", [ToPeerTime1 - UDPTime]),
                     enet_peer:recv_incoming_packet(Pid, IP, SentTime, Commands)
             catch
                 error:pool_full -> {error, reached_peer_limit};
@@ -288,6 +295,8 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
             case enet_pool:pick_peer(LocalPort, PeerID) of
                 false -> ok; %% Unknown peer - drop the packet
                 Pid ->
+                    ToPeerTime2 = erlang:system_time(1000),
+                    io:fwrite("UDPTime = ~w ~n", [ToPeerTime2 - UDPTime]),
                     enet_peer:recv_incoming_packet(Pid, IP, SentTime, Commands)
             end
     end,

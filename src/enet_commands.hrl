@@ -10,8 +10,7 @@
           compressed = 0,
           session_id = 0,
           peer_id    = ?MAX_PEER_ID,
-          sent_time  = undefined,
-          checksum   = undefined
+          sent_time  = undefined
         }).
 
 

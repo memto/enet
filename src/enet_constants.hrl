@@ -38,7 +38,7 @@
 -define(PEER_TIMEOUT_LIMIT                , 32).
 -define(PEER_TIMEOUT_MINIMUM              , 5000).
 -define(PEER_TIMEOUT_MAXIMUM              , 30000).
--define(PEER_PING_INTERVAL                , 500).
+-define(PEER_PING_INTERVAL                , 1000).
 -define(PEER_UNSEQUENCED_WINDOWS          , 64).
 -define(PEER_UNSEQUENCED_WINDOW_SIZE      , 1024).
 -define(PEER_FREE_UNSEQUENCED_WINDOWS     , 32).

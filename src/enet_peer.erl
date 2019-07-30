@@ -45,7 +45,7 @@
          local_port,
          ip,
          port,
-         remote_peer_id = undefined,
+         remote_peer_id = ?MAX_PEER_ID,
          peer_id,
          incoming_session_id = 16#FF,
          outgoing_session_id = 16#FF,
@@ -248,6 +248,7 @@ connecting(enter, _OldState, S) ->
        packet_throttle_deceleration = PacketThrottleDeceleration,
        outgoing_reliable_sequence_number = SequenceNr
       } = S,
+
     IncomingBandwidth = enet_host:get_incoming_bandwidth(Host),
     OutgoingBandwidth = enet_host:get_outgoing_bandwidth(Host),
     MTU = enet_host:get_mtu(Host),
@@ -267,34 +268,46 @@ connecting(enter, _OldState, S) ->
           PacketThrottleDeceleration,
           ConnectID,
           SequenceNr),
+
     HBin = enet_protocol_encode:command_header(ConnectH),
     CBin = enet_protocol_encode:command(ConnectC),
     Data = [HBin, CBin],
-    {sent_time, SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, IP, ConnectID, Port),
+    {sent_time, _SentTime} =
+        enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID),
+
     ChannelID = 16#FF,
-    ConnectTimeout =
-        make_resend_timer(
-          ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
+    ConnectTimeout = make_resend_timer(ChannelID, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
+
     NewS = S#state{
              outgoing_reliable_sequence_number = SequenceNr + 1,
              connect_id = ConnectID
             },
     {keep_state, NewS, [ConnectTimeout]};
 
-connecting(cast, {incoming_command, {H, C = #acknowledge{}}}, S) ->
+connecting(cast, {incoming_command, {H, #acknowledge{}}}, S) ->
     %%
     %% Received an Acknowledge command in the 'connecting' state.
     %%
     %% - Verify that the acknowledge is correct
     %% - Change state to 'acknowledging_verify_connect'
     %%
-    #command_header{ channel_id = ChannelID } = H,
-    #acknowledge{
-       received_reliable_sequence_number = SequenceNumber,
-       received_sent_time                = SentTime
-      } = C,
-    CanceledTimeout = cancel_resend_timer(ChannelID, SentTime, SequenceNumber),
+    #command_header{
+      channel_id = ChannelID,
+      reliable_sequence_number = SequenceNr
+    } = H,
+    CanceledTimeout = cancel_resend_timer(ChannelID, SequenceNr),
+
+    {next_state, acknowledging_verify_connect, S, [CanceledTimeout]};
+
+connecting(cast, {incoming_command, {H, C = #verify_connect{}}}, S) ->
+    #command_header{
+      channel_id = ChannelID,
+      reliable_sequence_number = SequenceNr
+    } = H,
+    CanceledTimeout = cancel_resend_timer(ChannelID, SequenceNr),
+
+    gen_statem:cast(self(), {incoming_command, {H, C}}),
+
     {next_state, acknowledging_verify_connect, S, [CanceledTimeout]};
 
 connecting({timeout, {_ChannelID, _SentTime, _SequenceNumber}}, _, S) ->
@@ -390,11 +403,10 @@ acknowledging_connect(EventType, EventContent, S) ->
 %%% Acknowledging Verify Connect state
 %%%
 
-acknowledging_verify_connect(enter, _OldState, S) ->
+acknowledging_verify_connect(enter, OldState, S) ->
     {keep_state, S};
 
-acknowledging_verify_connect(
-  cast, {incoming_command, {_H, C = #verify_connect{}}}, S) ->
+acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}}}, S) ->
     %%
     %% Received a Verify Connect command in the 'acknowledging_verify_connect'
     %% state.
@@ -408,11 +420,11 @@ acknowledging_verify_connect(
        outgoing_peer_id             = RemotePeerID,
        incoming_session_id          = _IncomingSessionID,
        outgoing_session_id          = _OutgoingSessionID,
-       mtu                          = RemoteMTU,
-       window_size                  = WindowSize,
+       mtu                          = _RemoteMTU,
+       window_size                  = _WindowSize,
        channel_count                = RemoteChannelCount,
-       incoming_bandwidth           = IncomingBandwidth,
-       outgoing_bandwidth           = OutgoingBandwidth,
+       incoming_bandwidth           = _IncomingBandwidth,
+       outgoing_bandwidth           = _OutgoingBandwidth,
        packet_throttle_interval     = ThrottleInterval,
        packet_throttle_acceleration = ThrottleAcceleration,
        packet_throttle_deceleration = ThrottleDeceleration,
@@ -422,24 +434,27 @@ acknowledging_verify_connect(
     %% TODO: Calculate and validate Session IDs
     %%
     #state{ channel_count = LocalChannelCount } = S,
-    LocalMTU = get_mtu(self()),
+    _LocalMTU = get_mtu(self()),
     case S of
         #state{
            %% ---
            %% Fields below are matched against the values received in
            %% the Verify Connect command.
            %% ---
-           window_size                  = WindowSize,
-           incoming_bandwidth           = IncomingBandwidth,
-           outgoing_bandwidth           = OutgoingBandwidth,
+
+           % window_size                  = WindowSize,
+           % incoming_bandwidth           = IncomingBandwidth,
+           % outgoing_bandwidth           = OutgoingBandwidth,
+
            packet_throttle_interval     = ThrottleInterval,
            packet_throttle_acceleration = ThrottleAcceleration,
            packet_throttle_deceleration = ThrottleDeceleration,
            connect_id                   = ConnectID
            %% ---
           } when
-              LocalChannelCount =:= RemoteChannelCount,
-              LocalMTU =:= RemoteMTU ->
+              LocalChannelCount =:= RemoteChannelCount
+              % LocalMTU =:= RemoteMTU
+              ->
             NewS = S#state{ remote_peer_id = RemotePeerID },
             {next_state, connected, NewS};
         _Mismatch ->
@@ -481,7 +496,7 @@ verifying_connect(EventType, EventContent, S) ->
 %%% Connected state
 %%%
 
-connected(enter, _OldState, S) ->
+connected(enter, OldState, S) ->
     #state{
        local_port = LocalPort,
        ip = IP,
@@ -519,6 +534,15 @@ connected(enter, _OldState, S) ->
             RecvTimeout = reset_recv_timer(),
             {keep_state, NewS, [SendTimeout, RecvTimeout]}
     end;
+
+connected(cast, {incoming_command, {_H, #verify_connect{}}}, S) ->
+    %%
+    %% Received VERYFY_CONNECT again.
+    %%
+    %% - Reset the receive-timer
+    %%
+    RecvTimeout = reset_recv_timer(),
+    {keep_state, S, [RecvTimeout]};
 
 connected(cast, {incoming_command, {_H, #ping{}}}, S) ->
     %%
@@ -768,6 +792,7 @@ connected({timeout, {ChannelID, SentTime, SequenceNr}}, Data, S) ->
     %% - Reset the resend-timer
     %% - Reset the send-timer
     %%
+
     #state{
        host = Host,
        ip = IP,
@@ -782,12 +807,13 @@ connected({timeout, {ChannelID, SentTime, SequenceNr}}, Data, S) ->
     SendTimeout = reset_send_timer(),
     {keep_state, S, [NewTimeout, SendTimeout]};
 
-connected({timeout, recv}, ping, S) ->
+connected({timeout, recv}, ping, #state{port=Port}=S) ->
     %%
     %% The receive-timer was triggered.
     %%
     %% - Stop
     %%
+
     {stop, timeout, S};
 
 connected({timeout, send}, ping, S) ->
@@ -797,23 +823,30 @@ connected({timeout, send}, ping, S) ->
     %% - Send a PING
     %% - Reset the send-timer
     %%
+
     #state{
        host = Host,
        ip = IP,
        port = Port,
        connect_id = ConnectID,
-       remote_peer_id = RemotePeerID
+       remote_peer_id = RemotePeerID,
+       outgoing_reliable_sequence_number = SequenceNr
       } = S,
-    {H, C} = enet_command:ping(),
+
+    {H, C} = enet_command:ping(SequenceNr),
+
     HBin = enet_protocol_encode:command_header(H),
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
     {sent_time, _SentTime} =
         enet_host:send_outgoing_commands(Host, Data, IP, Port, ConnectID, RemotePeerID),
     SendTimeout = reset_send_timer(),
-    {keep_state, S, [SendTimeout]};
+    NewS = S#state{
+         outgoing_reliable_sequence_number = SequenceNr + 1
+        },
+    {keep_state, NewS, [SendTimeout]};
 
-connected(EventType, EventContent, S) ->
+connected(EventType, EventContent, #state{port=Port}=S) ->
     handle_event(EventType, EventContent, S).
 
 
@@ -882,8 +915,9 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
     %% - Split and decode the commands from the binary
     %% - Send the commands as individual events to ourselves
     %%
-    #state{ host = Host, port = Port, connect_id = ConnectID } = S,
+    #state{ host = Host, port = Port, connect_id = ConnectID, outgoing_reliable_sequence_number = SequenceNr} = S,
     {ok, Commands} = enet_protocol_decode:commands(Packet),
+
     lists:foreach(
       fun ({H = #command_header{ please_acknowledge = 0 }, C}) ->
               %%
@@ -900,6 +934,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %% - Send the command to self for handling
               %%
               {AckH, AckC} = enet_command:acknowledge(H, SentTime),
+
               HBin = enet_protocol_encode:command_header(AckH),
               CBin = enet_protocol_encode:command(AckC),
               RemotePeerID =
@@ -908,9 +943,11 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
                       #verify_connect{} -> C#verify_connect.outgoing_peer_id;
                       _                 -> S#state.remote_peer_id
                   end,
+
+              CommandsOut = [HBin, CBin],
               {sent_time, _AckSentTime} =
                   enet_host:send_outgoing_commands(
-                    Host, [HBin, CBin], FromIP, Port, ConnectID, RemotePeerID),
+                    Host, CommandsOut, FromIP, Port, ConnectID, RemotePeerID),
               gen_statem:cast(self(), {incoming_command, {H, C}})
       end,
       Commands),
@@ -945,8 +982,14 @@ start_channels(N) ->
           IDs),
     maps:from_list(Channels).
 
+make_resend_timer(ChannelID, SequenceNumber, Time, Data) ->
+    {{timeout, {ChannelID, SequenceNumber}}, Time, Data}.
+
 make_resend_timer(ChannelID, SentTime, SequenceNumber, Time, Data) ->
     {{timeout, {ChannelID, SentTime, SequenceNumber}}, Time, Data}.
+
+cancel_resend_timer(ChannelID, SequenceNumber) ->
+    {{timeout, {ChannelID, SequenceNumber}}, infinity, undefined}.
 
 cancel_resend_timer(ChannelID, SentTime, SequenceNumber) ->
     {{timeout, {ChannelID, SentTime, SequenceNumber}}, infinity, undefined}.

@@ -7,7 +7,7 @@
         ]).
 
 create_enet_server() ->
-  ListeningPort = 7777,
+  ListeningPort = 17000,
   Self = self(),
   ConnectFun = fun(PeerInfo) ->
                    Self ! PeerInfo,
@@ -19,27 +19,20 @@ create_enet_server() ->
 
   {ok, Server}  = enet:start_host(ListeningPort, ConnectFun, Compressor, [{peer_limit, 8}]),
 
-  {ConnectID, LocalChannels} =
-    receive
-        #{peer := LocalPeer, channels := LCs, connect_id := C} -> {C, LCs}
-    after 50000 ->
-          ok = enet:stop_host(Server),
-          exit(local_peer_did_not_notify_worker)
-    end,
+  % {ConnectID, LocalChannels} =
+  %   receive
+  %       #{peer := LocalPeer, channels := LCs, connect_id := C} -> {C, LCs}
+  %   after 50000 ->
+  %         ok = enet:stop_host(Server),
+  %         exit(local_peer_did_not_notify_worker)
+  %   end,
 
-  io:fwrite("ConnectID: ~w, LocalChannels: ~w ~n", [ConnectID, LocalChannels]),
+  % io:fwrite("ConnectID: ~w, LocalChannels: ~w ~n", [ConnectID, LocalChannels]),
 
-  {ok, LocalChannel1}  = maps:find(0, LocalChannels),
-  ok = enet:send_reliable(LocalChannel1, <<"I AM SERVER">>),
+  % {ok, LocalChannel1}  = maps:find(0, LocalChannels),
+  % ok = enet:send_reliable(LocalChannel1, <<"I AM SERVER">>),
 
-  receive
-      Evt ->
-      io:fwrite("receive: [~w] ~n", [Evt]),
-      ok
-  after 50000 ->
-          ok = enet:stop_host(Server),
-          exit(remote_channel_did_not_send_data_to_worker)
-  end,
+  loop(50000, Server),
 
   % receive
   %     {enet, 0, #reliable{ data = Data1 }} ->
@@ -69,6 +62,17 @@ create_enet_server() ->
   % end,
 
   ok = enet:stop_host(Server).
+
+
+loop(Timeout, Server) ->
+  receive
+      Evt ->
+      io:fwrite("receive: [~w] ~n", [Evt]),
+      loop(Timeout, Server)
+  after Timeout ->
+      ok = enet:stop_host(Server),
+      exit(remote_channel_did_not_send_data_to_worker)
+  end.
 
 
 % ListeningPort = 1234,
