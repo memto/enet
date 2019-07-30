@@ -9,7 +9,7 @@
          verify_connect/8,
          sequenced_disconnect/0,
          unsequenced_disconnect/0,
-         ping/0,
+         ping/1,
          send_unsequenced/2,
          send_unreliable/3,
          send_reliable/3
@@ -24,7 +24,8 @@ acknowledge(H = #command_header{}, SentTime) ->
     {
       #command_header{
          command = ?COMMAND_ACKNOWLEDGE,
-         channel_id = ChannelID
+         channel_id = ChannelID,
+         reliable_sequence_number = N
         },
       #acknowledge{
          received_reliable_sequence_number = N,
@@ -127,11 +128,12 @@ unsequenced_disconnect() ->
     }.
 
 
-ping() ->
+ping(Seq) ->
     {
       #command_header{
-         unsequenced = 1,
-         command = ?COMMAND_PING
+         please_acknowledge = 1,
+         command = ?COMMAND_PING,
+         reliable_sequence_number = Seq
         },
       #ping{}
     }.

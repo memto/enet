@@ -13,6 +13,9 @@ rebar3 as test shell
 ```
 c("test/enet_server.erl").
 enet_server:create_enet_server().
+
+c("test/enet_client.erl").
+enet_client:create_enet_client().
 ```
 
 

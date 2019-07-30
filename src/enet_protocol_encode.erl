@@ -27,7 +27,6 @@ protocol_header(PH = #protocol_header{ sent_time = SentTime }) ->
                      PH#protocol_header.peer_id,
                      <<SentTime:16>>).
 
-
 %%%
 %%% Command Header
 %%%

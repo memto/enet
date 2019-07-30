@@ -59,11 +59,11 @@ give_socket(Host, Socket) ->
 connect(Host, IP, Port, ChannelCount) ->
     gen_server:call(Host, {connect, IP, Port, ChannelCount}).
 
-send_outgoing_commands(Host, Commands, IP, Port, ConnectID) ->
-    send_outgoing_commands(Host, Commands, IP, Port, ConnectID, ?NULL_PEER_ID).
+send_outgoing_commands(Host, Commands, ConnectID, IP, Port) ->
+    send_outgoing_commands(Host, Commands, ConnectID, IP, Port, ?NULL_PEER_ID).
 
-send_outgoing_commands(Host, Commands, IP, Port, ConnectID, PeerID) ->
-    gen_server:call(Host, {send_outgoing_commands, Commands, IP, Port, ConnectID, PeerID}).
+send_outgoing_commands(Host, Commands, ConnectID, IP, Port, PeerID) ->
+    gen_server:call(Host, {send_outgoing_commands, Commands, ConnectID, IP, Port, PeerID}).
 
 get_port(Host) ->
     gproc:get_value({p, l, port}, Host).
@@ -160,7 +160,7 @@ handle_call({connect, IP, Port, Channels}, _From, S) ->
         end,
     {reply, Reply, S};
 
-handle_call({send_outgoing_commands, Commands, IP, Port, ConnectID, ID}, _From, S) ->
+handle_call({send_outgoing_commands, Commands, ConnectID, RIP, RPort, RPeerID}, _From, S) ->
     %%
     %% Received outgoing commands from a peer.
     %%
@@ -171,10 +171,12 @@ handle_call({send_outgoing_commands, Commands, IP, Port, ConnectID, ID}, _From, 
     %%
 
     SentTime = get_time(),
+
     PH = #protocol_header{
-                peer_id = ID,
+                peer_id = RPeerID,
                 sent_time = SentTime
                },
+
     PH_Checksum = case ?CRC32 of
       false ->
         enet_protocol_encode:protocol_header(PH);
@@ -187,19 +189,24 @@ handle_call({send_outgoing_commands, Commands, IP, Port, ConnectID, ID}, _From, 
             Commands
         end,
 
-        Payload = case ConnectID of
-          undefined ->
+        Payload =
+        if
+          (RPeerID >= ?NULL_PEER_ID) or (ConnectID == undefined) ->
+            io:fwrite("Checksum No ConnectID ~n"),
             <<PHBin/binary, 0:32, CommandsBin/binary>>;
-          _ ->
+          true ->
+            io:fwrite("Checksum ConnectID ~w ~n", [ConnectID]),
             <<PHBin/binary, ConnectID:32, CommandsBin/binary>>
         end,
 
+        io:fwrite("Checksum input: ~w ~n", [Payload]),
         Checksum = erlang:crc32(Payload),
         <<PHBin/binary, Checksum:32>>
     end,
 
     Packet = [PH_Checksum, Commands],
-    ok = gen_udp:send(S#state.socket, IP, Port, Packet),
+    io:fwrite("<< send udp ~w ~n", [Packet]),
+    ok = gen_udp:send(S#state.socket, RIP, RPort, Packet),
     {reply, {sent_time, SentTime}, S}.
 
 
@@ -219,7 +226,7 @@ handle_cast(_Msg, State) ->
 %%% handle_info
 %%%
 
-handle_info({udp, Socket, IP, Port, Packet}, S) ->
+handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
     %%
     %% Received a UDP packet.
     %%
@@ -227,6 +234,9 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
     %% - Decompress the remaining packet if necessary
     %% - Send the packet to the peer (ID in protocol header)
     %%
+
+    UDPTime = erlang:system_time(1000),
+
     #state{
        socket = Socket,
        connect_fun = ConnectFun,
@@ -238,6 +248,8 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
        }
       } = S,
     %% TODO: Replace call to enet_protocol_decode with binary pattern match.
+
+    io:fwrite(">> revc udp: ~w ~n", [Packet]),
 
     {ok,
      #protocol_header{
@@ -251,9 +263,10 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
       false ->
         Rest1;
       true ->
-        <<_:32, Rest2/binary>> = Rest1,
+        <<_RCRC:32, Rest2/binary>> = Rest1,
         Rest2
     end,
+
 
     Commands =
         case IsCompressed of
@@ -272,14 +285,16 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
                     Peer = #enet_peer{
                               handshake_flow = remote,
                               peer_id = PeerID,
-                              ip = IP,
-                              port = Port,
+                              ip = RIP,
+                              port = RPort,
                               name = Ref,
                               host = self(),
                               connect_fun = ConnectFun
                              },
                     {ok, Pid} = start_peer(Peer),
-                    enet_peer:recv_incoming_packet(Pid, IP, SentTime, Commands)
+                    ToPeerTime1 = erlang:system_time(1000),
+                    io:fwrite("UDPTime1 = ~w ~n", [ToPeerTime1 - UDPTime]),
+                    enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
             catch
                 error:pool_full -> {error, reached_peer_limit};
                 error:exists    -> {error, exists}
@@ -288,7 +303,9 @@ handle_info({udp, Socket, IP, Port, Packet}, S) ->
             case enet_pool:pick_peer(LocalPort, PeerID) of
                 false -> ok; %% Unknown peer - drop the packet
                 Pid ->
-                    enet_peer:recv_incoming_packet(Pid, IP, SentTime, Commands)
+                    ToPeerTime2 = erlang:system_time(1000),
+                    io:fwrite("UDPTime2 = ~w ~n", [ToPeerTime2 - UDPTime]),
+                    enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
             end
     end,
     {noreply, S};
