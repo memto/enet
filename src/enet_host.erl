@@ -225,13 +225,6 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 
-sleep(Timeout) ->
-  receive
-  after Timeout ->
-    ok
-  end.
-
-
 %%%
 %%% handle_info
 %%%
