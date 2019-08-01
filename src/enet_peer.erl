@@ -52,6 +52,7 @@
          incoming_bandwidth = 0,
          outgoing_bandwidth = 0,
          window_size = ?MAX_WINDOW_SIZE,
+         mtu = ?MAX_MTU,
          packet_throttle_interval = ?PEER_PACKET_THROTTLE_INTERVAL,
          packet_throttle_acceleration = ?PEER_PACKET_THROTTLE_ACCELERATION,
          packet_throttle_deceleration = ?PEER_PACKET_THROTTLE_DECELERATION,
@@ -252,7 +253,6 @@ connecting(enter, _OldState, S) ->
     IncomingBandwidth = enet_host:get_incoming_bandwidth(Host),
     OutgoingBandwidth = enet_host:get_outgoing_bandwidth(Host),
     MTU = enet_host:get_mtu(Host),
-    gproc:reg({p, l, mtu}, MTU),
     <<ConnectID:32>> = crypto:strong_rand_bytes(4),
     {ConnectH, ConnectC} =
         enet_command:connect(
@@ -282,7 +282,8 @@ connecting(enter, _OldState, S) ->
 
     NewS = S#state{
              outgoing_reliable_sequence_number = SequenceNr + 1,
-             connect_id = ConnectID
+             connect_id = ConnectID,
+             mtu = MTU
             },
     {keep_state, NewS, [ConnectTimeout]};
 
@@ -441,13 +442,13 @@ acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}
     %%
     #verify_connect{
        outgoing_peer_id             = RemotePeerID,
-       incoming_session_id          = _IncomingSessionID,
-       outgoing_session_id          = _OutgoingSessionID,
-       mtu                          = _RemoteMTU,
-       window_size                  = _WindowSize,
+       incoming_session_id          = IncomingSessionID,
+       outgoing_session_id          = OutgoingSessionID,
+       mtu                          = RemoteMTU,
+       window_size                  = RemoteWindowSize,
        channel_count                = RemoteChannelCount,
-       incoming_bandwidth           = _IncomingBandwidth,
-       outgoing_bandwidth           = _OutgoingBandwidth,
+       incoming_bandwidth           = IncomingBandwidth,
+       outgoing_bandwidth           = OutgoingBandwidth,
        packet_throttle_interval     = ThrottleInterval,
        packet_throttle_acceleration = ThrottleAcceleration,
        packet_throttle_deceleration = ThrottleDeceleration,
@@ -456,29 +457,62 @@ acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}
     %%
     %% TODO: Calculate and validate Session IDs
     %%
-    #state{ channel_count = LocalChannelCount } = S,
-    _LocalMTU = get_mtu(self()),
+    #state{
+      channel_count = LocalChannelCount,
+      mtu = LocalMTU,
+      window_size = LocalWindowSize
+    } = S,
+
     case S of
         #state{
            %% ---
            %% Fields below are matched against the values received in
            %% the Verify Connect command.
            %% ---
-
-           % window_size                  = WindowSize,
-           % incoming_bandwidth           = IncomingBandwidth,
-           % outgoing_bandwidth           = OutgoingBandwidth,
-
            packet_throttle_interval     = ThrottleInterval,
            packet_throttle_acceleration = ThrottleAcceleration,
            packet_throttle_deceleration = ThrottleDeceleration,
            connect_id                   = ConnectID
            %% ---
           } when
-              LocalChannelCount =:= RemoteChannelCount
-              % LocalMTU =:= RemoteMTU
-              ->
-            NewS = S#state{ remote_peer_id = RemotePeerID },
+          RemoteChannelCount >= ?MIN_CHANNEL_COUNT,
+          RemoteChannelCount =< ?MAX_CHANNEL_COUNT
+          ->
+            MTU1 = if
+              RemoteMTU < ?MIN_MTU -> ?MIN_MTU;
+              true ->
+                if
+                  RemoteMTU > ?MAX_MTU -> ?MAX_MTU;
+                  true -> RemoteMTU
+                end
+            end,
+            MTU2 = if
+              MTU1 < LocalMTU -> MTU1;
+              true -> LocalMTU
+            end,
+
+            WindowSize1 = if
+              RemoteWindowSize < ?MIN_WINDOW_SIZE -> ?MIN_WINDOW_SIZE;
+              true ->
+                if
+                  RemoteWindowSize > ?MAX_WINDOW_SIZE -> ?MAX_WINDOW_SIZE;
+                  true -> RemoteWindowSize
+                end
+            end,
+            WindowSize2 = if
+              WindowSize1 < LocalWindowSize -> WindowSize1;
+              true -> LocalWindowSize
+            end,
+
+            NewS = S#state{
+              remote_peer_id = RemotePeerID,
+              incoming_session_id = IncomingSessionID,
+              outgoing_session_id = OutgoingSessionID,
+              mtu = MTU2,
+              window_size = WindowSize2,
+              incoming_bandwidth = IncomingBandwidth,
+              outgoing_bandwidth = OutgoingBandwidth
+            },
             {next_state, connected, NewS};
         _Mismatch ->
             {stop, connect_verification_failed, S}
