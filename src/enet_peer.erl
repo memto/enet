@@ -275,7 +275,7 @@ connecting(enter, _OldState, S) ->
     CBin = enet_protocol_encode:command(ConnectC),
     Data = [HBin, CBin],
     {sent_time, _SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port),
+        enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, IP, Port),
 
     ChannelID = 16#FF,
     ConnectTimeout = make_resend_timer(ChannelID, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
@@ -287,7 +287,7 @@ connecting(enter, _OldState, S) ->
             },
     {keep_state, NewS, [ConnectTimeout]};
 
-connecting(cast, {incoming_command, {H, #acknowledge{}}}, S) ->
+connecting(cast, {incoming_command, _SentTime, {H, #acknowledge{}}}, S) ->
     %%
     %% Received an Acknowledge command in the 'connecting' state.
     %%
@@ -302,14 +302,14 @@ connecting(cast, {incoming_command, {H, #acknowledge{}}}, S) ->
 
     {next_state, acknowledging_verify_connect, S, [CanceledTimeout]};
 
-connecting(cast, {incoming_command, {H, C = #verify_connect{}}}, S) ->
+connecting(cast, {incoming_command, SentTime, {H, C = #verify_connect{}}}, S) ->
     #command_header{
       channel_id = ChannelID,
       reliable_sequence_number = SequenceNr
     } = H,
     CanceledTimeout = cancel_resend_timer(ChannelID, SequenceNr),
 
-    gen_statem:cast(self(), {incoming_command, {H, C}}),
+    gen_statem:cast(self(), {incoming_command, SentTime, {H, C}}),
 
     {next_state, acknowledging_verify_connect, S, [CanceledTimeout]};
 
@@ -328,9 +328,10 @@ connecting({timeout, {ChannelID, SequenceNr}}, Data, S) ->
        host = Host,
        ip = IP,
        port = Port,
-       connect_id = ConnectID
+       connect_id = ConnectID,
+       outgoing_session_id = SessionID
       } = S,
-    enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port),
+    enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port),
     NewTimeout = make_resend_timer(ChannelID, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
     {keep_state, S, [NewTimeout]};
 
@@ -348,7 +349,7 @@ connecting(EventType, EventContent, S) ->
 acknowledging_connect(enter, _OldState, S) ->
     {keep_state, S};
 
-acknowledging_connect(cast, {incoming_command, {_H, C = #connect{}}}, S) ->
+acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}}, S) ->
     %%
     %% Received a Connect command.
     %%
@@ -359,7 +360,7 @@ acknowledging_connect(cast, {incoming_command, {_H, C = #connect{}}}, S) ->
     #connect{
        outgoing_peer_id             = RemotePeerID,
        incoming_session_id          = _IncomingSessionID,
-       outgoing_session_id          = _OutgoingSessionID,
+       outgoing_session_id          = OutgoingSessionID,
        mtu                          = MTU,
        window_size                  = WindowSize,
        channel_count                = ChannelCount,
@@ -396,7 +397,7 @@ acknowledging_connect(cast, {incoming_command, {_H, C = #connect{}}}, S) ->
     CBin = enet_protocol_encode:command(VCC),
     Data = [HBin, CBin],
     {sent_time, SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, IP, Port, RemotePeerID),
     ChannelID = 16#FF,
     VerifyConnectTimeout =
         make_resend_timer(
@@ -430,7 +431,7 @@ acknowledging_connect(EventType, EventContent, S) ->
 acknowledging_verify_connect(enter, _OldState, S) ->
     {keep_state, S};
 
-acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}}}, S) ->
+acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_connect{}}}, S) ->
     %%
     %% Received a Verify Connect command in the 'acknowledging_verify_connect'
     %% state.
@@ -440,6 +441,20 @@ acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}
     %% - Notify worker that we are connected
     %% - Change state to 'connected'
     %%
+
+    %%
+    %% TODO: Calculate and validate Session IDs
+    %%
+
+    #state{
+      host = Host,
+      ip = FromIP,
+      port = Port,
+      channel_count = LocalChannelCount,
+      mtu = LocalMTU,
+      window_size = LocalWindowSize
+    } = S,
+
     #verify_connect{
        outgoing_peer_id             = RemotePeerID,
        incoming_session_id          = IncomingSessionID,
@@ -454,14 +469,6 @@ acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}
        packet_throttle_deceleration = ThrottleDeceleration,
        connect_id                   = ConnectID
       } = C,
-    %%
-    %% TODO: Calculate and validate Session IDs
-    %%
-    #state{
-      channel_count = LocalChannelCount,
-      mtu = LocalMTU,
-      window_size = LocalWindowSize
-    } = S,
 
     case S of
         #state{
@@ -478,6 +485,11 @@ acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}
           RemoteChannelCount >= ?MIN_CHANNEL_COUNT,
           RemoteChannelCount =< ?MAX_CHANNEL_COUNT
           ->
+            ChannelCount = if
+              RemoteChannelCount < LocalChannelCount -> RemoteChannelCount;
+              true -> LocalChannelCount
+            end,
+
             MTU1 = if
               RemoteMTU < ?MIN_MTU -> ?MIN_MTU;
               true ->
@@ -504,7 +516,16 @@ acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}
               true -> LocalWindowSize
             end,
 
+            {AckH, AckC} = enet_command:acknowledge(H, SentTime),
+            HBin = enet_protocol_encode:command_header(AckH),
+            CBin = enet_protocol_encode:command(AckC),
+            Data = [HBin, CBin],
+            io:fwrite("<< AckAfter: ~s ~n", [command_name(?COMMAND_ACKNOWLEDGE)]),
+            {sent_time, _AckSentTime} =
+                enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, FromIP, Port, RemotePeerID),
+
             NewS = S#state{
+              channel_count = ChannelCount,
               remote_peer_id = RemotePeerID,
               incoming_session_id = IncomingSessionID,
               outgoing_session_id = OutgoingSessionID,
@@ -529,7 +550,7 @@ acknowledging_verify_connect(EventType, EventContent, S) ->
 verifying_connect(enter, _OldState, S) ->
     {keep_state, S};
 
-verifying_connect(cast, {incoming_command, {H, C = #acknowledge{}}}, S) ->
+verifying_connect(cast, {incoming_command, _SentTime, {H, C = #acknowledge{}}}, S) ->
     %%
     %% Received an Acknowledge command in the 'verifying_connect' state.
     %%
@@ -592,7 +613,7 @@ connected(enter, _OldState, S) ->
             {keep_state, NewS, [SendTimeout, RecvTimeout]}
     end;
 
-connected(cast, {incoming_command, {_H, #verify_connect{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {_H, #verify_connect{}}}, S) ->
     %%
     %% Received VERYFY_CONNECT again.
     %%
@@ -601,7 +622,7 @@ connected(cast, {incoming_command, {_H, #verify_connect{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
-connected(cast, {incoming_command, {_H, #ping{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {_H, #ping{}}}, S) ->
     %%
     %% Received PING.
     %%
@@ -610,7 +631,7 @@ connected(cast, {incoming_command, {_H, #ping{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
-connected(cast, {incoming_command, {H, C = #acknowledge{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C = #acknowledge{}}}, S) ->
     %%
     %% Received an Acknowledge command.
     %%
@@ -626,7 +647,7 @@ connected(cast, {incoming_command, {H, C = #acknowledge{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [CanceledTimeout, RecvTimeout]};
 
-connected(cast, {incoming_command, {_H, C = #bandwidth_limit{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {_H, C = #bandwidth_limit{}}}, S) ->
     %%
     %% Received Bandwidth Limit command.
     %%
@@ -654,7 +675,7 @@ connected(cast, {incoming_command, {_H, C = #bandwidth_limit{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, NewS, [RecvTimeout]};
 
-connected(cast, {incoming_command, {_H, C = #throttle_configure{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {_H, C = #throttle_configure{}}}, S) ->
     %%
     %% Received Throttle Configure command.
     %%
@@ -674,7 +695,7 @@ connected(cast, {incoming_command, {_H, C = #throttle_configure{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, NewS, [RecvTimeout]};
 
-connected(cast, {incoming_command, {H, C = #unsequenced{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C = #unsequenced{}}}, S) ->
     %%
     %% Received Send Unsequenced command.
     %%
@@ -687,7 +708,7 @@ connected(cast, {incoming_command, {H, C = #unsequenced{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
-connected(cast, {incoming_command, {H, C = #unreliable{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C = #unreliable{}}}, S) ->
     %%
     %% Received Send Unreliable command.
     %%
@@ -700,7 +721,7 @@ connected(cast, {incoming_command, {H, C = #unreliable{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
-connected(cast, {incoming_command, {H, C = #reliable{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C = #reliable{}}}, S) ->
     %%
     %% Received Send Reliable command.
     %%
@@ -713,7 +734,7 @@ connected(cast, {incoming_command, {H, C = #reliable{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
-connected(cast, {incoming_command, {_H, #disconnect{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {_H, #disconnect{}}}, S) ->
     %%
     %% Received Disconnect command.
     %%
@@ -747,6 +768,7 @@ connected(cast, {outgoing_command, {H, C = #unsequenced{}}}, S) ->
        ip = IP,
        port = Port,
        connect_id = ConnectID,
+       outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID,
        outgoing_unsequenced_group = Group
       } = S,
@@ -755,7 +777,7 @@ connected(cast, {outgoing_command, {H, C = #unsequenced{}}}, S) ->
     CBin = enet_protocol_encode:command(C1),
     Data = [HBin, CBin],
     {sent_time, _SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
     NewS = S#state{ outgoing_unsequenced_group = Group + 1 },
     SendTimeout = reset_send_timer(),
     {keep_state, NewS, [SendTimeout]};
@@ -772,13 +794,14 @@ connected(cast, {outgoing_command, {H, C = #unreliable{}}}, S) ->
        ip = IP,
        port = Port,
        connect_id = ConnectID,
+       outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
       } = S,
     HBin = enet_protocol_encode:command_header(H),
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
     {sent_time, _SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
     SendTimeout = reset_send_timer(),
     {keep_state, S, [SendTimeout]};
 
@@ -794,6 +817,7 @@ connected(cast, {outgoing_command, {H, C = #reliable{}}}, S) ->
        ip = IP,
        port = Port,
        connect_id = ConnectID,
+       outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
       } = S,
     #command_header{
@@ -804,7 +828,7 @@ connected(cast, {outgoing_command, {H, C = #reliable{}}}, S) ->
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
     {sent_time, SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
     SendReliableTimeout =
         make_resend_timer(
           ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
@@ -823,13 +847,14 @@ connected(cast, disconnect, State) ->
        ip = IP,
        port = Port,
        connect_id = ConnectID,
+       outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
       } = State,
     {H, C} = enet_command:sequenced_disconnect(),
     HBin = enet_protocol_encode:command_header(H),
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
-    enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port, RemotePeerID),
+    enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
     {next_state, disconnecting, State};
 
 connected(cast, disconnect_now, State) ->
@@ -855,9 +880,10 @@ connected({timeout, {ChannelID, SentTime, SequenceNr}}, Data, S) ->
        ip = IP,
        port = Port,
        connect_id = ConnectID,
+       outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
       } = S,
-    enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port, RemotePeerID),
+    enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
     NewTimeout =
         make_resend_timer(
           ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
@@ -886,6 +912,7 @@ connected({timeout, send}, ping, S) ->
        ip = IP,
        port = Port,
        connect_id = ConnectID,
+       outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID,
        outgoing_reliable_sequence_number = SequenceNr
       } = S,
@@ -896,7 +923,7 @@ connected({timeout, send}, ping, S) ->
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
     {sent_time, _SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port, RemotePeerID),
+        enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
     SendTimeout = reset_send_timer(),
     NewS = S#state{
          outgoing_reliable_sequence_number = SequenceNr + 1
@@ -921,7 +948,7 @@ disconnecting(enter, _OldState, S) ->
     ok = enet_disconnector:unset_trigger(LocalPort, RemotePeerID, IP, Port),
     {keep_state, S};
 
-disconnecting(cast, {incoming_command, {_H, _C = #acknowledge{}}}, S) ->
+disconnecting(cast, {incoming_command, _SentTime, {_H, _C = #acknowledge{}}}, S) ->
     %%
     %% Received an Acknowledge command in the 'disconnecting' state.
     %%
@@ -936,7 +963,7 @@ disconnecting(cast, {incoming_command, {_H, _C = #acknowledge{}}}, S) ->
     Worker ! {enet, disconnected, local, self(), ConnectID},
     {stop, normal, S};
 
-disconnecting(cast, {incoming_command, {_H, _C}}, S) ->
+disconnecting(cast, {incoming_command, _SentTime, {_H, _C}}, S) ->
     {keep_state, S};
 
 disconnecting(EventType, EventContent, S) ->
@@ -972,24 +999,14 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
     %% - Split and decode the commands from the binary
     %% - Send the commands as individual events to ourselves
     %%
-    #state{ host = Host, port = Port, connect_id = ConnectID} = S,
+    #state{
+      host = Host,
+      port = Port,
+      connect_id = ConnectID,
+      outgoing_session_id = SessionID
+    } = S,
+
     {ok, Commands} = enet_protocol_decode:commands(Packet),
-
-    CommandNames = #{
-        1 => "COMMAND_ACKNOWLEDGE"             ,
-        2 => "COMMAND_CONNECT"                 ,
-        3 => "COMMAND_VERIFY_CONNECT"          ,
-        4 => "COMMAND_DISCONNECT"              ,
-        5 => "COMMAND_PING"                    ,
-        6 => "COMMAND_SEND_RELIABLE"           ,
-        7 => "COMMAND_SEND_UNRELIABLE"         ,
-        8 => "COMMAND_SEND_FRAGMENT"           ,
-        9 => "COMMAND_SEND_UNSEQUENCED"        ,
-       10 => "COMMAND_BANDWIDTH_LIMIT"         ,
-       11 => "COMMAND_THROTTLE_CONFIGURE"      ,
-       12 => "COMMAND_SEND_UNRELIABLE_FRAGMENT"
-    },
-
     lists:foreach(
       fun ({H = #command_header{ please_acknowledge = 0, command = CNum }, C}) ->
               %%
@@ -997,9 +1014,9 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %%
               %% - Send the command to self for handling
               %%
-              io:fwrite(">> ~s ~n", [maps:get(CNum, CommandNames)]),
+              io:fwrite(">> ~s ~n", [command_name(CNum)]),
 
-              gen_statem:cast(self(), {incoming_command, {H, C}});
+              gen_statem:cast(self(), {incoming_command, SentTime, {H, C}});
           ({H = #command_header{ please_acknowledge = 1, command = CNum }, C}) ->
               %%
               %% Received a command that should be acknowledged.
@@ -1007,24 +1024,28 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %% - Acknowledge the command
               %% - Send the command to self for handling
               %%
-              io:fwrite(">> ~s ~n", [maps:get(CNum, CommandNames)]),
+              io:fwrite(">> ~s ~n", [command_name(CNum)]),
 
-              {AckH, AckC} = enet_command:acknowledge(H, SentTime),
-
-              HBin = enet_protocol_encode:command_header(AckH),
-              CBin = enet_protocol_encode:command(AckC),
-              RemotePeerID =
+              {AckNow, RemotePeerID} =
                   case C of
-                      #connect{}        -> C#connect.outgoing_peer_id;
-                      #verify_connect{} -> C#verify_connect.outgoing_peer_id;
-                      _                 -> S#state.remote_peer_id
+                      #connect{}        -> {false, C#connect.outgoing_peer_id};
+                      #verify_connect{} -> {false, C#verify_connect.outgoing_peer_id};
+                      _                 -> {true, S#state.remote_peer_id}
                   end,
 
-              Data = [HBin, CBin],
-              io:fwrite("<< ~s ~n", [maps:get(?COMMAND_ACKNOWLEDGE, CommandNames)]),
-              {sent_time, _AckSentTime} =
-                  enet_host:send_outgoing_commands(Host, Data, ConnectID, FromIP, Port, RemotePeerID),
-              gen_statem:cast(self(), {incoming_command, {H, C}})
+              case AckNow of
+                true ->
+                  {AckH, AckC} = enet_command:acknowledge(H, SentTime),
+                  HBin = enet_protocol_encode:command_header(AckH),
+                  CBin = enet_protocol_encode:command(AckC),
+                  Data = [HBin, CBin],
+                  io:fwrite("<< AckNow: ~s ~n", [command_name(?COMMAND_ACKNOWLEDGE)]),
+                  {sent_time, _AckSentTime} =
+                      enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, FromIP, Port, RemotePeerID);
+                _ -> ok
+              end,
+
+              gen_statem:cast(self(), {incoming_command, SentTime, {H, C}})
       end,
       Commands),
     {keep_state, S#state{ ip = FromIP }};
@@ -1080,3 +1101,20 @@ start_worker({Module, Fun, Args}, PeerInfo) ->
     erlang:apply(Module, Fun, Args ++ [PeerInfo]);
 start_worker(ConnectFun, PeerInfo) ->
     ConnectFun(PeerInfo).
+
+command_name(CmdNum) ->
+  CommandNames = #{
+      1 => "COMMAND_ACKNOWLEDGE"             ,
+      2 => "COMMAND_CONNECT"                 ,
+      3 => "COMMAND_VERIFY_CONNECT"          ,
+      4 => "COMMAND_DISCONNECT"              ,
+      5 => "COMMAND_PING"                    ,
+      6 => "COMMAND_SEND_RELIABLE"           ,
+      7 => "COMMAND_SEND_UNRELIABLE"         ,
+      8 => "COMMAND_SEND_FRAGMENT"           ,
+      9 => "COMMAND_SEND_UNSEQUENCED"        ,
+     10 => "COMMAND_BANDWIDTH_LIMIT"         ,
+     11 => "COMMAND_THROTTLE_CONFIGURE"      ,
+     12 => "COMMAND_SEND_UNRELIABLE_FRAGMENT"
+  },
+  maps:get(CmdNum, CommandNames).

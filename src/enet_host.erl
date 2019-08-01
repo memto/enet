@@ -12,8 +12,8 @@
          socket_options/0,
          give_socket/2,
          connect/4,
-         send_outgoing_commands/5,
          send_outgoing_commands/6,
+         send_outgoing_commands/7,
          get_port/1,
          get_incoming_bandwidth/1,
          get_outgoing_bandwidth/1,
@@ -61,11 +61,11 @@ give_socket(Host, Socket) ->
 connect(Host, IP, Port, ChannelCount) ->
     gen_server:call(Host, {connect, IP, Port, ChannelCount}).
 
-send_outgoing_commands(Host, Commands, ConnectID, IP, Port) ->
-    send_outgoing_commands(Host, Commands, ConnectID, IP, Port, ?NULL_PEER_ID).
+send_outgoing_commands(Host, Commands, ConnectID, SessionID, IP, Port) ->
+    send_outgoing_commands(Host, Commands, ConnectID, SessionID, IP, Port, ?NULL_PEER_ID).
 
-send_outgoing_commands(Host, Commands, ConnectID, IP, Port, PeerID) ->
-    gen_server:call(Host, {send_outgoing_commands, Commands, ConnectID, IP, Port, PeerID}).
+send_outgoing_commands(Host, Commands, ConnectID, SessionID, IP, Port, PeerID) ->
+    gen_server:call(Host, {send_outgoing_commands, Commands, ConnectID, SessionID, IP, Port, PeerID}).
 
 get_port(Host) ->
     gproc:get_value({p, l, port}, Host).
@@ -162,7 +162,7 @@ handle_call({connect, IP, Port, Channels}, _From, S) ->
         end,
     {reply, Reply, S};
 
-handle_call({send_outgoing_commands, Commands, ConnectID, RIP, RPort, RPeerID}, _From, S) ->
+handle_call({send_outgoing_commands, Commands, ConnectID, SessionID, RIP, RPort, RPeerID}, _From, S) ->
     %%
     %% Received outgoing commands from a peer.
     %%
@@ -174,10 +174,19 @@ handle_call({send_outgoing_commands, Commands, ConnectID, RIP, RPort, RPeerID}, 
 
     SentTime = get_time(),
 
-    PH = #protocol_header{
-                peer_id = RPeerID,
-                sent_time = SentTime
-               },
+    PH = if
+      RPeerID < ?MAX_PEER_ID ->
+        #protocol_header{
+          session_id = SessionID,
+          peer_id = RPeerID,
+          sent_time = SentTime
+         };
+      true ->
+        #protocol_header{
+          peer_id = RPeerID,
+          sent_time = SentTime
+         }
+    end,
 
     PH_Checksum = case ?CRC32 of
       false ->
@@ -193,12 +202,12 @@ handle_call({send_outgoing_commands, Commands, ConnectID, RIP, RPort, RPeerID}, 
 
         Payload =
         if
-          (RPeerID >= ?NULL_PEER_ID) ->
-            io:fwrite("Checksum No Remote Peer ~n"),
-            <<PHBin/binary, 0:32, CommandsBin/binary>>;
-          true ->
+          (RPeerID < ?MAX_PEER_ID) ->
             io:fwrite("Checksum Remote Peer ConnectID=~w ~n", [ConnectID]),
-            <<PHBin/binary, ConnectID:32, CommandsBin/binary>>
+            <<PHBin/binary, ConnectID:32, CommandsBin/binary>>;
+          true ->
+            io:fwrite("Checksum No Remote Peer ~n"),
+            <<PHBin/binary, 0:32, CommandsBin/binary>>
         end,
 
         io:fwrite("Checksum input: ~w ~n", [Payload]),
@@ -254,7 +263,6 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
 
     UDPTime = erlang:system_time(1000),
     io:fwrite("~n[~w] >> revc udp: ~w ~n", [UDPTime, Packet]),
-    sleep(500),
 
     {ok,
      #protocol_header{
