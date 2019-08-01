@@ -37,6 +37,7 @@ enet_range_coder_compress(_Ctx, Payload) ->
     {ok, <<>>}.
 
 enet_range_coder_decompress(_Ctx, Payload) ->
+    io:fwrite("~w enet_range_coder_decompress ~n", [?MODULE]),
     decompress(Payload).
 
 decompress(Payload) -> decompress(Payload).

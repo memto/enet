@@ -135,6 +135,8 @@ enet_range_coder_compress_loop1_bottom(Context, EnetRcCompVars, EnetRcCompLoop1V
 
 
 enet_range_coder_decompress(Context, Payload) ->
+  io:fwrite("~w enet_range_coder_decompress ~n", [?MODULE]),
+
   EnetRcDecVars = #enet_rc_dec_vars{
     symbols = Context,
 

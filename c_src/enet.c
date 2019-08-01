@@ -105,42 +105,6 @@ error_tuple(ErlNifEnv *env, int errnum)
 
 static ErlNifFunc nif_funcs[] = {
     {"decompress", 1, nif_enet_decompress},
-    // {"fdrecv", 1, nif_fdrecv},
-
-    // {"close", 1, nif_close},
-
-    // {"accept", 2, nif_accept},
-    // {"bind", 2, nif_bind},
-    // {"connect", 2, nif_connect},
-    // {"getsockname", 2, nif_getsockname},
-    // {"getsockopt_nif", 4, nif_getsockopt},
-    // {"listen", 2, nif_listen},
-    // {"read", 2, nif_read},
-    // {"write_nif", 2, nif_write},
-    // {"writev_nif", 2, nif_writev},
-
-    // {"ioctl", 3, nif_ioctl},
-    // {"socket_nif", 3, nif_socket},
-    // {"setns", 2, nif_setns},
-    // {"recvmsg_nif", 5, nif_recvmsg},
-    // {"sendmsg_nif", 5, nif_sendmsg},
-
-    // {"recvfrom", 4, nif_recvfrom},
-    // {"sendto_nif", 4, nif_sendto},
-    // {"setsockopt_nif", 4, nif_setsockopt},
-
-    // {"alloc_nif", 1, nif_alloc},
-    // {"buf", 1, nif_buf},
-    // {"memcpy", 2, nif_memcpy},
-
-    // {"socket_level", 0, nif_socket_levels},
-    // {"socket_optname", 0, nif_socket_optnames},
-    // {"socket_protocol", 0, nif_socket_protocols},
-    // {"socket_level", 1, nif_socket_level},
-    // {"socket_optname", 1, nif_socket_optname},
-    // {"socket_protocol", 1, nif_socket_protocol},
-
-    // {"errno_id", 1, nif_errno_id}
 };
 
 ERL_NIF_INIT(enet_compress, nif_funcs, load, reload, upgrade, NULL)

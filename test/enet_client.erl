@@ -1,6 +1,3 @@
-% c("test/enet_client.erl"). enet_client:create_enet_client().
-
-
 -module(enet_client).
 
 % -include_lib("enet/include/enet.hrl").
@@ -11,16 +8,19 @@
          check_crc/6
         ]).
 
+check_crc2(ConnectID, Payload) ->
+  ok
+  .
+
 % [{{:command_header, 0, 0, 1, 255, 1}, {:acknowledge, 1, 14369}}, {{:command_header, 1, 0, 5, 255, 2}, {:ping}}]
 check_crc(PeerID, ChannelID, Seq, SentTime, AckSentTime, ConnectID) ->
-
-% -record(protocol_header,
-%         {
-%           compressed = 0,
-%           session_id = 0,
-%           peer_id    = ?MAX_PEER_ID,
-%           sent_time  = undefined
-%         }).
+  % -record(protocol_header,
+  %         {
+  %           compressed = 0,
+  %           session_id = 0,
+  %           peer_id    = ?MAX_PEER_ID,
+  %           sent_time  = undefined
+  %         }).
 
   PH = #protocol_header{
             peer_id = PeerID,
@@ -76,6 +76,7 @@ check_crc(PeerID, ChannelID, Seq, SentTime, AckSentTime, ConnectID) ->
   .
 
 
+% c("test/enet_client.erl"). enet_client:create_enet_client().
 create_enet_client() ->
   Self = self(),
 
@@ -85,14 +86,18 @@ create_enet_client() ->
                end,
 
   Compressor = enet_compress:enet_get_compressor(range_coder),
+  % Compressor = enet_compress2:enet_get_compressor(range_coder),
 
   {ok, Client}  = enet:start_host(0, ConnectFun, Compressor, [{peer_limit, 1}]),
+  % {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 18000, 2),
   {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 17094, 2),
+  % {ok, Peer} = enet:connect_peer(Client, {45,77,23,123}, 18000, 2),
 
   io:fwrite("Client= ~w Peer= ~w ~n", [Client, Peer]),
 
   loop(50000, Client),
 
+  ok = enet:disconnect_peer(Peer),
   ok = enet:stop_host(Client)
   .
 

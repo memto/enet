@@ -88,8 +88,6 @@ get_channel_limit(Host) ->
 %%%===================================================================
 
 init({AssignedPort, ConnectFun, Commpressor, Options}) ->
-    enet_compress:trigger_load(),
-
     true = gproc:reg({n, l, {enet_host, AssignedPort}}),
     ChannelLimit =
         case lists:keyfind(channel_limit, 1, Options) of
@@ -227,6 +225,13 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 
+sleep(Timeout) ->
+  receive
+  after Timeout ->
+    ok
+  end.
+
+
 %%%
 %%% handle_info
 %%%
@@ -256,6 +261,7 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
 
     UDPTime = erlang:system_time(1000),
     io:fwrite("~n[~w] >> revc udp: ~w ~n", [UDPTime, Packet]),
+    sleep(500),
 
     {ok,
      #protocol_header{
