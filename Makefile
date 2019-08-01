@@ -1,13 +1,3 @@
-all:
-	erl -pa ebin/ -make
-
-clean:
-	rm ebin/*.beam
-
-dialyzer:
-	dialyzer ebin/
-
-
 REBAR ?= rebar3
 
 all: dirs compile
@@ -23,14 +13,6 @@ clean:
 
 deps:
 	@$(REBAR) get-deps
-
-examples: eg
-eg:
-	@erlc -I deps -o ebin examples/*.erl
-
-setuid: all
-	sudo chown root priv/procket
-	sudo chmod 4750 priv/procket
 
 .PHONY: dialyzer typer clean distclean
 
