@@ -312,6 +312,27 @@ connecting(cast, {incoming_command, {H, C = #verify_connect{}}}, S) ->
 
     {next_state, acknowledging_verify_connect, S, [CanceledTimeout]};
 
+
+connecting({timeout, {ChannelID, SequenceNr}}, Data, S) ->
+    %%
+    %% A resend-timer was triggered.
+    %%
+    %% - TODO: Keep track of number of resends
+    %% - Resend the associated command
+    %% - Reset the resend-timer
+    %% - Reset the send-timer
+    %%
+
+    #state{
+       host = Host,
+       ip = IP,
+       port = Port,
+       connect_id = ConnectID
+      } = S,
+    enet_host:send_outgoing_commands(Host, Data, ConnectID, IP, Port),
+    NewTimeout = make_resend_timer(ChannelID, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
+    {keep_state, S, [NewTimeout]};
+
 connecting({timeout, {_ChannelID, _SentTime, _SequenceNumber}}, _, S) ->
     {stop, timeout, S};
 
@@ -405,7 +426,7 @@ acknowledging_connect(EventType, EventContent, S) ->
 %%% Acknowledging Verify Connect state
 %%%
 
-acknowledging_verify_connect(enter, OldState, S) ->
+acknowledging_verify_connect(enter, _OldState, S) ->
     {keep_state, S};
 
 acknowledging_verify_connect(cast, {incoming_command, {_H, C = #verify_connect{}}}, S) ->
@@ -498,7 +519,7 @@ verifying_connect(EventType, EventContent, S) ->
 %%% Connected state
 %%%
 
-connected(enter, OldState, S) ->
+connected(enter, _OldState, S) ->
     #state{
        local_port = LocalPort,
        ip = IP,
@@ -809,7 +830,7 @@ connected({timeout, {ChannelID, SentTime, SequenceNr}}, Data, S) ->
     SendTimeout = reset_send_timer(),
     {keep_state, S, [NewTimeout, SendTimeout]};
 
-connected({timeout, recv}, ping, #state{port=Port}=S) ->
+connected({timeout, recv}, ping, #state{}=S) ->
     %%
     %% The receive-timer was triggered.
     %%
@@ -848,7 +869,7 @@ connected({timeout, send}, ping, S) ->
         },
     {keep_state, NewS, [SendTimeout]};
 
-connected(EventType, EventContent, #state{port=Port}=S) ->
+connected(EventType, EventContent, #state{}=S) ->
     handle_event(EventType, EventContent, S).
 
 
@@ -917,7 +938,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
     %% - Split and decode the commands from the binary
     %% - Send the commands as individual events to ourselves
     %%
-    #state{ host = Host, port = Port, connect_id = ConnectID, outgoing_reliable_sequence_number = SequenceNr} = S,
+    #state{ host = Host, port = Port, connect_id = ConnectID} = S,
     {ok, Commands} = enet_protocol_decode:commands(Packet),
 
     CommandNames = #{

@@ -31,16 +31,18 @@
          code_change/3
         ]).
 
+-define(CRC32, true).
+
+-define(NULL_PEER_ID, ?MAX_PEER_ID).
+
 -record(state,
         {
          socket,
          connect_fun,
-         compressor
+         compressor,
+         connect_id = undefined
         }).
 
--define(NULL_PEER_ID, ?MAX_PEER_ID).
-
--define(CRC32, true).
 
 %%%===================================================================
 %%% API
@@ -86,6 +88,8 @@ get_channel_limit(Host) ->
 %%%===================================================================
 
 init({AssignedPort, ConnectFun, Commpressor, Options}) ->
+    enet_compress:trigger_load(),
+
     true = gproc:reg({n, l, {enet_host, AssignedPort}}),
     ChannelLimit =
         case lists:keyfind(channel_limit, 1, Options) of
@@ -191,11 +195,11 @@ handle_call({send_outgoing_commands, Commands, ConnectID, RIP, RPort, RPeerID}, 
 
         Payload =
         if
-          (RPeerID >= ?NULL_PEER_ID) or (ConnectID == undefined) ->
-            io:fwrite("Checksum No ConnectID ~n"),
+          (RPeerID >= ?NULL_PEER_ID) ->
+            io:fwrite("Checksum No Remote Peer ~n"),
             <<PHBin/binary, 0:32, CommandsBin/binary>>;
           true ->
-            io:fwrite("Checksum ConnectID ~w ~n", [ConnectID]),
+            io:fwrite("Checksum Remote Peer ConnectID=~w ~n", [ConnectID]),
             <<PHBin/binary, ConnectID:32, CommandsBin/binary>>
         end,
 
@@ -205,9 +209,10 @@ handle_call({send_outgoing_commands, Commands, ConnectID, RIP, RPort, RPeerID}, 
     end,
 
     Packet = [PH_Checksum, Commands],
-    io:fwrite("<< send udp ~w ~n", [Packet]),
+    io:fwrite("[~w] << send udp ~w ~n", [erlang:system_time(1000), Packet]),
     ok = gen_udp:send(S#state.socket, RIP, RPort, Packet),
-    {reply, {sent_time, SentTime}, S}.
+
+    {reply, {sent_time, SentTime}, S#state{connect_id=ConnectID}}.
 
 
 %%%
@@ -235,7 +240,6 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
     %% - Send the packet to the peer (ID in protocol header)
     %%
 
-    UDPTime = erlang:system_time(1000),
 
     #state{
        socket = Socket,
@@ -245,34 +249,50 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
         compress = _CompressFun,
         decompress = DecompressFun,
         destroy = _DestroyFun
-       }
+       },
+       connect_id = ConnectID
       } = S,
     %% TODO: Replace call to enet_protocol_decode with binary pattern match.
 
-    io:fwrite(">> revc udp: ~w ~n", [Packet]),
+    UDPTime = erlang:system_time(1000),
+    io:fwrite("~n[~w] >> revc udp: ~w ~n", [UDPTime, Packet]),
 
     {ok,
      #protocol_header{
         compressed = IsCompressed,
         peer_id = RecipientPeerID,
         sent_time = SentTime
-       },
+       }=PH,
      Rest1} = enet_protocol_decode:protocol_header(Packet),
 
-    Rest = case ?CRC32 of
+    {RemoteChecksum, Rest} = case ?CRC32 of
       false ->
-        Rest1;
+        {undefined, Rest1};
       true ->
-        <<_RCRC:32, Rest2/binary>> = Rest1,
-        Rest2
+        <<XX:32, Rest2/binary>> = Rest1,
+        {XX, Rest2}
     end,
 
 
     Commands =
         case IsCompressed of
             0 -> Rest;
-            1 -> start_compressor(DecompressFun, Context, Rest)
+            1 ->
+              {ok, Out} = start_compressor(DecompressFun, Context, Rest),
+              Out
         end,
+
+    PHBin = enet_protocol_encode:protocol_header(PH),
+    Payload = case ConnectID of
+      undefined ->
+        <<PHBin/binary, 0:32, Commands/binary>>;
+      _ ->
+        <<PHBin/binary, ConnectID:32, Commands/binary>>
+    end,
+
+    io:fwrite("Checksum input: ~w ~n", [Payload]),
+    Checksum = erlang:crc32(Payload),
+    io:fwrite("Checksum/RemoteChecksum: ~w/~w ConnectID=~w ~n", [Checksum, RemoteChecksum, ConnectID]),
 
     LocalPort = get_port(self()),
     case RecipientPeerID of
@@ -294,6 +314,7 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
                     {ok, Pid} = start_peer(Peer),
                     ToPeerTime1 = erlang:system_time(1000),
                     io:fwrite("UDPTime1 = ~w ~n", [ToPeerTime1 - UDPTime]),
+
                     enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
             catch
                 error:pool_full -> {error, reached_peer_limit};
