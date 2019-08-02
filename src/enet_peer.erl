@@ -581,15 +581,17 @@ connected(enter, _OldState, S) ->
        port = Port,
        remote_peer_id = RemotePeerID,
        connect_id = ConnectID,
+       outgoing_session_id = SessionID,
        channel_count = N,
        connect_fun = ConnectFun
       } = S,
     true = gproc:mreg(p, l, [
                              {connect_id, ConnectID},
+                             {outgoing_session_id, SessionID},
                              {remote_host_port, Port},
                              {remote_peer_id, RemotePeerID}
                             ]),
-    ok = enet_disconnector:set_trigger(LocalPort, RemotePeerID, IP, Port),
+    ok = enet_disconnector:set_trigger(LocalPort, RemotePeerID, IP, Port, ConnectID, SessionID),
     Channels = start_channels(N),
     PeerInfo = #{
                  ip => IP,
@@ -747,9 +749,10 @@ connected(cast, {incoming_command, _SentTime, {_H, #disconnect{}}}, S) ->
        ip = IP,
        port = Port,
        remote_peer_id = RemotePeerID,
-       connect_id = ConnectID
+       connect_id = ConnectID,
+       outgoing_session_id = SessionID
       } = S,
-    ok = enet_disconnector:unset_trigger(LocalPort, RemotePeerID, IP, Port),
+    ok = enet_disconnector:unset_trigger(LocalPort, RemotePeerID, IP, Port, ConnectID, SessionID),
     Worker ! {enet, disconnected, remote, self(), ConnectID},
     {stop, normal, S};
 
@@ -943,9 +946,11 @@ disconnecting(enter, _OldState, S) ->
        local_port = LocalPort,
        ip = IP,
        port = Port,
-       remote_peer_id = RemotePeerID
+       remote_peer_id = RemotePeerID,
+       connect_id = ConnectID,
+       outgoing_session_id = SessionID
       } = S,
-    ok = enet_disconnector:unset_trigger(LocalPort, RemotePeerID, IP, Port),
+    ok = enet_disconnector:unset_trigger(LocalPort, RemotePeerID, IP, Port, ConnectID, SessionID),
     {keep_state, S};
 
 disconnecting(cast, {incoming_command, _SentTime, {_H, _C = #acknowledge{}}}, S) ->
