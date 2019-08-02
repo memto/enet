@@ -71,7 +71,7 @@ handle_info({gproc, unreg, _Ref, {n, l, {PeerID, IP, Port, ConnectID, SessionID}
     CBin = enet_protocol_encode:command(Command),
     Data = [HBin, CBin],
     Host = gproc:where({n, l, {enet_host, LocalPort}}),
-    io:fwrite("<< UNSEQUENCED_DISCONNECT ~n"),
+    io:fwrite("<< unsequenced_disconnect {ConnectID,SessionID,IP,Port,PeerID}=~w ~n", [{ConnectID, SessionID, IP, Port, PeerID}]),
     enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, PeerID),
     {noreply, S}.
 
