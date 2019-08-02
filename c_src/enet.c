@@ -58,16 +58,14 @@ upgrade(ErlNifEnv* env, void** priv_data, void** old_priv_data, ERL_NIF_TERM inf
   return 0;
 }
 
-ENetRangeCoder context;
 
 /* 0: inData */
 static ERL_NIF_TERM
-nif_enet_decompress(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+nif_enet_range_coder_decompress(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
-    int fd = -1;
-    unsigned long inLimit = 0;
-    ErlNifBinary inData = {0};
+    ENetRangeCoder context;
 
+    ErlNifBinary inData = {0};
     ErlNifBinary outData = {0};
 
     if (!enif_inspect_binary(env, argv[0], &inData))
@@ -76,9 +74,14 @@ nif_enet_decompress(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!enif_alloc_binary(ENET_PROTOCOL_MAXIMUM_MTU, &outData))
         return error_tuple(env, ENOMEM);
 
-    size_t outLen = enet_range_coder_decompress(&context, inData.data, inData.size, outData.data, outData.size);
+    size_t originalSize = enet_range_coder_decompress(&context, inData.data, inData.size, outData.data, outData.size);
+    if ( originalSize <= 0 || originalSize > ENET_PROTOCOL_MAXIMUM_MTU) {
+        int err = errno;
+        enif_release_binary(&outData);
+        return error_tuple(env, err);
+    }
 
-    ENET_REALLOC(outData, outLen);
+    ENET_REALLOC(outData, originalSize);
 
     return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &outData));
 }
@@ -104,7 +107,7 @@ error_tuple(ErlNifEnv *env, int errnum)
 }
 
 static ErlNifFunc nif_funcs[] = {
-    {"decompress", 1, nif_enet_decompress},
+    {"enet_range_coder_decompress", 1, nif_enet_range_coder_decompress},
 };
 
 ERL_NIF_INIT(enet_compress, nif_funcs, load, reload, upgrade, NULL)

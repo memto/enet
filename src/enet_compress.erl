@@ -6,7 +6,7 @@
         trigger_load/0,
         enet_get_compressor/1,
         enet_range_coder_compress/2,
-        enet_range_coder_decompress/2, decompress/1,
+        enet_range_coder_decompress/2, enet_range_coder_decompress/1,
         enet_range_coder_destroy/1
     ]).
 
@@ -38,9 +38,9 @@ enet_range_coder_compress(_Ctx, Payload) ->
 
 enet_range_coder_decompress(_Ctx, Payload) ->
     % io:fwrite("~w enet_range_coder_decompress ~n", [?MODULE]),
-    decompress(Payload).
+    enet_range_coder_decompress(Payload).
 
-decompress(Payload) -> decompress(Payload).
+enet_range_coder_decompress(Payload) -> enet_range_coder_decompress(Payload).
 
 enet_range_coder_destroy(_Ctx) ->
     {ok, <<>>}.
