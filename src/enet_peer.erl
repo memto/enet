@@ -384,8 +384,6 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
        data                         = _Data
       } = C,
 
-      io:fwrite("acknowledging_connect ~w ~n", [ConnectChannelCount]),
-
       case S of
           #state{} when
             ConnectChannelCount >= ?MIN_CHANNEL_COUNT,
@@ -400,8 +398,6 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
               OutgoingSessionIDSet = enet_command:calculate_session_id(C#connect.outgoing_session_id, IncomingSessionID),
               MTUSet = enet_command:clamp(C#connect.mtu, ?MAX_MTU, ?MIN_MTU),
               WindowSizeSet = enet_command:calculate_window_size(IncomingBandwidth, C#connect.window_size),
-
-              io:fwrite("~w/~w ~n", [ConnectChannelCount, HostChannelLimit]),
 
               {VCH, VCC} = enet_command:verify_connect(
                                          PeerID,
@@ -1136,6 +1132,6 @@ reset_send_timer() ->
     {{timeout, send}, ?PEER_PING_INTERVAL, ping}.
 
 start_worker({Module, Fun, Args}, PeerInfo) ->
-    erlang:apply(Module, Fun, Args ++ [PeerInfo]);
+    erlang:apply(Module, Fun, [PeerInfo] ++ Args);
 start_worker(ConnectFun, PeerInfo) ->
     ConnectFun(PeerInfo).
