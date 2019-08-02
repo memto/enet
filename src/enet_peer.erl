@@ -629,7 +629,8 @@ connected(enter, _OldState, S) ->
                  port => Port,
                  peer => self(),
                  channels => Channels,
-                 connect_id => ConnectID
+                 connect_id => ConnectID,
+                 session_id => SessionID
                 },
     case start_worker(ConnectFun, PeerInfo) of
         {error, Reason} ->
