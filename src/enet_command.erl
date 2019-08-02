@@ -12,9 +12,26 @@
          ping/1,
          send_unsequenced/2,
          send_unreliable/3,
-         send_reliable/3
+         send_reliable/3,
+         command_name/1
         ]).
 
+command_name(CmdNum) ->
+  CommandNames = #{
+      1 => "COMMAND_ACKNOWLEDGE"             ,
+      2 => "COMMAND_CONNECT"                 ,
+      3 => "COMMAND_VERIFY_CONNECT"          ,
+      4 => "COMMAND_DISCONNECT"              ,
+      5 => "COMMAND_PING"                    ,
+      6 => "COMMAND_SEND_RELIABLE"           ,
+      7 => "COMMAND_SEND_UNRELIABLE"         ,
+      8 => "COMMAND_SEND_FRAGMENT"           ,
+      9 => "COMMAND_SEND_UNSEQUENCED"        ,
+     10 => "COMMAND_BANDWIDTH_LIMIT"         ,
+     11 => "COMMAND_THROTTLE_CONFIGURE"      ,
+     12 => "COMMAND_SEND_UNRELIABLE_FRAGMENT"
+  },
+  maps:get(CmdNum, CommandNames).
 
 acknowledge(H = #command_header{}, SentTime) ->
     #command_header{
