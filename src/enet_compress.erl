@@ -19,7 +19,7 @@
 -on_load(on_load/0).
 
 on_load() ->
-    io:fwrite("enet_compress: ~s ~n", [progname()]),
+    % io:fwrite("enet_compress: ~s ~n", [progname()]),
     erlang:load_nif(progname(), []).
 
 trigger_load() ->
@@ -37,7 +37,7 @@ enet_range_coder_compress(_Ctx, Payload) ->
     {ok, <<>>}.
 
 enet_range_coder_decompress(_Ctx, Payload) ->
-    io:fwrite("~w enet_range_coder_decompress ~n", [?MODULE]),
+    % io:fwrite("~w enet_range_coder_decompress ~n", [?MODULE]),
     decompress(Payload).
 
 decompress(Payload) -> decompress(Payload).

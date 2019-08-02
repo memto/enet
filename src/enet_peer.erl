@@ -269,7 +269,7 @@ connecting(enter, _OldState, S) ->
           ConnectID,
           SequenceNr),
 
-    io:fwrite("<< COMMAND_CONNECT ~n"),
+    % io:fwrite("<< COMMAND_CONNECT ~n"),
 
     HBin = enet_protocol_encode:command_header(ConnectH),
     CBin = enet_protocol_encode:command(ConnectC),
@@ -520,7 +520,7 @@ acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_
             HBin = enet_protocol_encode:command_header(AckH),
             CBin = enet_protocol_encode:command(AckC),
             Data = [HBin, CBin],
-            io:fwrite("<< AckAfter: ~s ~n", [command_name(?COMMAND_ACKNOWLEDGE)]),
+            % io:fwrite("<< AckAfter: ~s ~n", [command_name(?COMMAND_ACKNOWLEDGE)]),
             {sent_time, _AckSentTime} =
                 enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, FromIP, Port, RemotePeerID),
 
@@ -1019,7 +1019,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %%
               %% - Send the command to self for handling
               %%
-              io:fwrite(">> ~s ~n", [command_name(CNum)]),
+              % io:fwrite(">> ~s ~n", [command_name(CNum)]),
 
               gen_statem:cast(self(), {incoming_command, SentTime, {H, C}});
           ({H = #command_header{ please_acknowledge = 1, command = CNum }, C}) ->
@@ -1029,7 +1029,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %% - Acknowledge the command
               %% - Send the command to self for handling
               %%
-              io:fwrite(">> ~s ~n", [command_name(CNum)]),
+              % io:fwrite(">> ~s ~n", [command_name(CNum)]),
 
               {AckNow, RemotePeerID} =
                   case C of
@@ -1044,7 +1044,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
                   HBin = enet_protocol_encode:command_header(AckH),
                   CBin = enet_protocol_encode:command(AckC),
                   Data = [HBin, CBin],
-                  io:fwrite("<< AckNow: ~s ~n", [command_name(?COMMAND_ACKNOWLEDGE)]),
+                  % io:fwrite("<< AckNow: ~s ~n", [command_name(?COMMAND_ACKNOWLEDGE)]),
                   {sent_time, _AckSentTime} =
                       enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, FromIP, Port, RemotePeerID);
                 _ -> ok

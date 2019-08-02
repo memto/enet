@@ -203,20 +203,20 @@ handle_call({send_outgoing_commands, Commands, ConnectID, SessionID, RIP, RPort,
         Payload =
         if
           (RPeerID < ?MAX_PEER_ID) ->
-            io:fwrite("Checksum Remote Peer ConnectID=~w ~n", [ConnectID]),
+            % io:fwrite("Checksum Remote Peer ConnectID=~w ~n", [ConnectID]),
             <<PHBin/binary, ConnectID:32, CommandsBin/binary>>;
           true ->
-            io:fwrite("Checksum No Remote Peer ~n"),
+            % io:fwrite("Checksum No Remote Peer ~n"),
             <<PHBin/binary, 0:32, CommandsBin/binary>>
         end,
 
-        io:fwrite("Checksum input: ~w ~n", [Payload]),
+        % io:fwrite("Checksum input: ~w ~n", [Payload]),
         Checksum = erlang:crc32(Payload),
         <<PHBin/binary, Checksum:32>>
     end,
 
     Packet = [PH_Checksum, Commands],
-    io:fwrite("[~w] << send udp ~w ~n", [erlang:system_time(1000), Packet]),
+    % io:fwrite("[~w] << send udp ~w ~n", [erlang:system_time(1000), Packet]),
     ok = gen_udp:send(S#state.socket, RIP, RPort, Packet),
 
     {reply, {sent_time, SentTime}, S#state{connect_id=ConnectID}}.
@@ -262,7 +262,7 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
     %% TODO: Replace call to enet_protocol_decode with binary pattern match.
 
     UDPTime = erlang:system_time(1000),
-    io:fwrite("~n[~w] >> revc udp: ~w ~n", [UDPTime, Packet]),
+    % io:fwrite("~n[~w] >> revc udp: ~w ~n", [UDPTime, Packet]),
 
     {ok,
      #protocol_header{
@@ -297,9 +297,9 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
         <<PHBin/binary, ConnectID:32, Commands/binary>>
     end,
 
-    io:fwrite("Checksum input: ~w ~n", [Payload]),
+    % io:fwrite("Checksum input: ~w ~n", [Payload]),
     Checksum = erlang:crc32(Payload),
-    io:fwrite("Checksum/RemoteChecksum: ~w/~w ConnectID=~w ~n", [Checksum, RemoteChecksum, ConnectID]),
+    % io:fwrite("Checksum/RemoteChecksum: ~w/~w ConnectID=~w ~n", [Checksum, RemoteChecksum, ConnectID]),
 
     LocalPort = get_port(self()),
     case RecipientPeerID of
@@ -320,7 +320,7 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
                              },
                     {ok, Pid} = start_peer(Peer),
                     ToPeerTime1 = erlang:system_time(1000),
-                    io:fwrite("UDPTime1 = ~w ~n", [ToPeerTime1 - UDPTime]),
+                    % io:fwrite("UDPTime1 = ~w ~n", [ToPeerTime1 - UDPTime]),
 
                     enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
             catch
@@ -332,7 +332,7 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
                 false -> ok; %% Unknown peer - drop the packet
                 Pid ->
                     ToPeerTime2 = erlang:system_time(1000),
-                    io:fwrite("UDPTime2 = ~w ~n", [ToPeerTime2 - UDPTime]),
+                    % io:fwrite("UDPTime2 = ~w ~n", [ToPeerTime2 - UDPTime]),
                     enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
             end
     end,
