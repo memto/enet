@@ -1,9 +1,9 @@
 -record(enet_peer,
         {
          handshake_flow,
-         peer_id,
-         ip,
-         port,
+         local_peer_id,
+         remote_ip,
+         remote_port,
          name,
          host,
          channels,

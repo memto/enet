@@ -27,7 +27,7 @@ create_enet_server() ->
 
 loop(Timeout, Server) ->
   receive
-      #{channels := Channels, connect_id := ConnectID, ip := IP, peer := Peer, port := Port, session_id := SessionID} = Evt ->
+      #{peer := Peer, channels := Channels, connect_id := ConnectID, remote_ip := RIp, remote_port := RPort} = Evt ->
         io:fwrite("A new client connected ~w ~n", [Evt]),
         {ok, LocalChannel1}  = maps:find(0, Channels),
         ok = enet:send_reliable(LocalChannel1, <<"local->remote 1">>),

@@ -33,7 +33,7 @@ enet_get_compressor(range_coder) ->
     destroy = {enet_compress, enet_range_coder_destroy, []}
   }.
 
-enet_range_coder_compress(_Ctx, Payload) ->
+enet_range_coder_compress(_Ctx, _Payload) ->
     {ok, <<>>}.
 
 enet_range_coder_decompress(_Ctx, Payload) ->

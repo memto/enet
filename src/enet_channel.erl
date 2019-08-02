@@ -109,7 +109,6 @@ await_worker(S) ->
 
 loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
     receive
-
         {system, From, Request} ->
             #state{ sys_parent = Parent, sys_debug = Debug } = S,
             sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, S);
@@ -120,6 +119,7 @@ loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
           }} ->
             Worker ! {enet, ID, C},
             loop(S);
+
         {send_unsequenced, Data} ->
             {H, C} = enet_command:send_unsequenced(ID, Data),
             ok = enet_peer:send_command(Peer, {H, C}),
@@ -137,6 +137,7 @@ loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
                     NewS = S#state{ incoming_unreliable_sequence_number = N },
                     loop(NewS)
             end;
+
         {send_unreliable, Data} ->
             N = S#state.outgoing_unreliable_sequence_number,
             {H, C} = enet_command:send_unreliable(ID, N, Data),
@@ -151,6 +152,7 @@ loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
             Worker ! {enet, ID, C},
             NewS = S#state{ incoming_reliable_sequence_number = N + 1 },
             loop(NewS);
+
         {send_reliable, Data} ->
             N = S#state.outgoing_reliable_sequence_number,
             {H, C} = enet_command:send_reliable(ID, N, Data),

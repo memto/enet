@@ -17,7 +17,7 @@
          get_connect_id/1,
          get_mtu/1,
          get_name/1,
-         get_peer_id/1,
+         get_local_peer_id/1,
          get_pool/1,
          get_pool_worker_id/1
         ]).
@@ -43,10 +43,10 @@
 -record(state,
         {
          local_port,
-         ip,
-         port,
+         remote_ip,
+         remote_port,
+         local_peer_id,
          remote_peer_id = ?MAX_PEER_ID,
-         peer_id,
          incoming_session_id = 16#FF,
          outgoing_session_id = 16#FF,
          incoming_bandwidth = 0,
@@ -149,8 +149,8 @@ get_mtu(Peer) ->
 get_name(Peer) ->
     gproc:get_value({p, l, name}, Peer).
 
-get_peer_id(Peer) ->
-    gproc:get_value({p, l, peer_id}, Peer).
+get_local_peer_id(Peer) ->
+    gproc:get_value({p, l, local_peer_id}, Peer).
 
 get_pool(Peer) ->
     gen_statem:call(Peer, pool).
@@ -171,9 +171,9 @@ init([LocalPort, P = #enet_peer{ handshake_flow = local }]) ->
     %% - Start in the 'connecting' state
     %%
     #enet_peer{
-       peer_id = PeerID,
-       ip = IP,
-       port = Port,
+       local_peer_id = PeerID,
+       remote_ip = IP,
+       remote_port = Port,
        name = Ref,
        host = Host,
        channels = N,
@@ -182,13 +182,13 @@ init([LocalPort, P = #enet_peer{ handshake_flow = local }]) ->
     enet_pool:connect_peer(LocalPort, Ref),
     gproc:reg({n, l, {enet_peer, Ref}}),
     gproc:reg({p, l, name}, Ref),
-    gproc:reg({p, l, peer_id}, PeerID),
+    gproc:reg({p, l, local_peer_id}, PeerID),
     S = #state{
            host = Host,
            local_port = LocalPort,
-           ip = IP,
-           port = Port,
-           peer_id = PeerID,
+           remote_ip = IP,
+           remote_port = Port,
+           local_peer_id = PeerID,
            channel_count = N,
            connect_fun = ConnectFun
           },
@@ -202,23 +202,24 @@ init([LocalPort, P = #enet_peer{ handshake_flow = remote }]) ->
     %% - Handle the received Connect command
     %%
     #enet_peer{
-       peer_id = PeerID,
-       ip = IP,
-       port = Port,
+       local_peer_id = PeerID,
+       remote_ip = IP,
+       remote_port = Port,
        name = Ref,
        host = Host,
        connect_fun = ConnectFun
       } = P,
+
     enet_pool:connect_peer(LocalPort, Ref),
     gproc:reg({n, l, {enet_peer, Ref}}),
     gproc:reg({p, l, name}, Ref),
-    gproc:reg({p, l, peer_id}, PeerID),
+    gproc:reg({p, l, local_peer_id}, PeerID),
     S = #state{
            host = Host,
            local_port = LocalPort,
-           ip = IP,
-           port = Port,
-           peer_id = PeerID,
+           remote_ip = IP,
+           remote_port = Port,
+           local_peer_id = PeerID,
            connect_fun = ConnectFun
           },
     {ok, acknowledging_connect, S}.
@@ -239,9 +240,9 @@ connecting(enter, _OldState, S) ->
     #state{
        host = Host,
        channel_count = ChannelCount,
-       ip = IP,
-       port = Port,
-       peer_id = PeerID,
+       remote_ip = IP,
+       remote_port = Port,
+       local_peer_id = PeerID,
        incoming_session_id = IncomingSessionID,
        outgoing_session_id = OutgoingSessionID,
        packet_throttle_interval = PacketThrottleInterval,
@@ -326,8 +327,8 @@ connecting({timeout, {ChannelID, SequenceNr}}, Data, S) ->
 
     #state{
        host = Host,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        connect_id = ConnectID,
        outgoing_session_id = SessionID
       } = S,
@@ -360,9 +361,9 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
 
     #state{
        host = Host,
-       ip = IP,
-       port = Port,
-       peer_id = PeerID,
+       remote_ip = IP,
+       remote_port = Port,
+       local_peer_id = PeerID,
        incoming_session_id = IncomingSessionID,
        outgoing_session_id = OutgoingSessionID,
        outgoing_reliable_sequence_number = SequenceNr
@@ -370,10 +371,10 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
 
     #connect{
        outgoing_peer_id             = RemotePeerID,
-       incoming_session_id          = ConnectIncomingSessionID,
-       outgoing_session_id          = ConnectOutgoingSessionID,
-       mtu                          = ConnectMTU,
-       window_size                  = ConnectWindowSize,
+       incoming_session_id          = _ConnectIncomingSessionID,
+       outgoing_session_id          = _ConnectOutgoingSessionID,
+       mtu                          = _ConnectMTU,
+       window_size                  = _ConnectWindowSize,
        channel_count                = ConnectChannelCount,
        incoming_bandwidth           = IncomingBandwidth,
        outgoing_bandwidth           = OutgoingBandwidth,
@@ -439,7 +440,7 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
                 window_size = WindowSizeSet,
                 outgoing_reliable_sequence_number = SequenceNr + 1
               },
-              {next_state, verifying_connect, NewS};
+              {next_state, verifying_connect, NewS, [VerifyConnectTimeout]};
           _Invalid ->
               {stop, connect_channel_count_invalid, S}
       end;
@@ -475,8 +476,8 @@ acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_
 
     #state{
       host = Host,
-      ip = FromIP,
-      port = Port,
+      remote_ip = FromIP,
+      remote_port = Port,
       channel_count = LocalChannelCount,
       mtu = LocalMTU,
       window_size = LocalWindowSize
@@ -486,8 +487,8 @@ acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_
        outgoing_peer_id             = RemotePeerID,
        incoming_session_id          = IncomingSessionID,
        outgoing_session_id          = OutgoingSessionID,
-       mtu                          = RemoteMTU,
-       window_size                  = RemoteWindowSize,
+       mtu                          = _RemoteMTU,
+       window_size                  = _RemoteWindowSize,
        channel_count                = RemoteChannelCount,
        incoming_bandwidth           = IncomingBandwidth,
        outgoing_bandwidth           = OutgoingBandwidth,
@@ -512,36 +513,13 @@ acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_
           RemoteChannelCount >= ?MIN_CHANNEL_COUNT,
           RemoteChannelCount =< ?MAX_CHANNEL_COUNT
           ->
-            ChannelCount = if
-              RemoteChannelCount < LocalChannelCount -> RemoteChannelCount;
-              true -> LocalChannelCount
-            end,
+            ChannelCountSet = min(LocalChannelCount, RemoteChannelCount),
 
-            MTU1 = if
-              RemoteMTU < ?MIN_MTU -> ?MIN_MTU;
-              true ->
-                if
-                  RemoteMTU > ?MAX_MTU -> ?MAX_MTU;
-                  true -> RemoteMTU
-                end
-            end,
-            MTU2 = if
-              MTU1 < LocalMTU -> MTU1;
-              true -> LocalMTU
-            end,
+            MTU1 = enet_command:clamp(C#verify_connect.mtu, ?MAX_MTU, ?MIN_MTU),
+            MTUSet = min(MTU1, LocalMTU),
 
-            WindowSize1 = if
-              RemoteWindowSize < ?MIN_WINDOW_SIZE -> ?MIN_WINDOW_SIZE;
-              true ->
-                if
-                  RemoteWindowSize > ?MAX_WINDOW_SIZE -> ?MAX_WINDOW_SIZE;
-                  true -> RemoteWindowSize
-                end
-            end,
-            WindowSize2 = if
-              WindowSize1 < LocalWindowSize -> WindowSize1;
-              true -> LocalWindowSize
-            end,
+            WindowSize1 = enet_command:clamp(C#verify_connect.window_size, ?MIN_WINDOW_SIZE, ?MAX_WINDOW_SIZE),
+            WindowSizeSet = min(WindowSize1, LocalWindowSize),
 
             {AckH, AckC} = enet_command:acknowledge(H, SentTime),
             HBin = enet_protocol_encode:command_header(AckH),
@@ -552,12 +530,12 @@ acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_
                 enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, FromIP, Port, RemotePeerID),
 
             NewS = S#state{
-              channel_count = ChannelCount,
+              channel_count = ChannelCountSet,
               remote_peer_id = RemotePeerID,
               incoming_session_id = IncomingSessionID,
               outgoing_session_id = OutgoingSessionID,
-              mtu = MTU2,
-              window_size = WindowSize2,
+              mtu = MTUSet,
+              window_size = WindowSizeSet,
               incoming_bandwidth = IncomingBandwidth,
               outgoing_bandwidth = OutgoingBandwidth
             },
@@ -604,8 +582,9 @@ verifying_connect(EventType, EventContent, S) ->
 connected(enter, _OldState, S) ->
     #state{
        local_port = LocalPort,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
+       mtu = MTU,
        remote_peer_id = RemotePeerID,
        connect_id = ConnectID,
        outgoing_session_id = SessionID,
@@ -613,6 +592,7 @@ connected(enter, _OldState, S) ->
        connect_fun = ConnectFun
       } = S,
     true = gproc:mreg(p, l, [
+                             {mtu, MTU},
                              {connect_id, ConnectID},
                              {outgoing_session_id, SessionID},
                              {remote_host_port, Port},
@@ -621,8 +601,8 @@ connected(enter, _OldState, S) ->
     ok = enet_disconnector:set_trigger(LocalPort, RemotePeerID, IP, Port, ConnectID, SessionID),
     Channels = start_channels(N),
     PeerInfo = #{
-                 ip => IP,
-                 port => Port,
+                 remote_ip => IP,
+                 remote_port => Port,
                  peer => self(),
                  channels => Channels,
                  connect_id => ConnectID,
@@ -751,6 +731,20 @@ connected(cast, {incoming_command, _SentTime, {H, C = #unreliable{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
+connected(cast, {incoming_command, _SentTime, {H, C = #fragment{}}}, S) ->
+    %%
+    %% Received Send Fragment command.
+    %%
+    %% - Forward the command to the relevant channel
+    %% - Reset the receive-timer
+    %%
+    io:fwrite("fragment ~w ~n", [C]),
+    #command_header{ channel_id = ChannelID } = H,
+    #state{ channels = #{ ChannelID := Channel } } = S,
+    % ok = enet_channel:recv_reliable(Channel, {H, C}),
+    RecvTimeout = reset_recv_timer(),
+    {keep_state, S, [RecvTimeout]};
+
 connected(cast, {incoming_command, _SentTime, {H, C = #reliable{}}}, S) ->
     %%
     %% Received Send Reliable command.
@@ -774,14 +768,14 @@ connected(cast, {incoming_command, _SentTime, {_H, #disconnect{}}}, S) ->
     #state{
        worker = Worker,
        local_port = LocalPort,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        remote_peer_id = RemotePeerID,
        connect_id = ConnectID,
        outgoing_session_id = SessionID
       } = S,
     ok = enet_disconnector:unset_trigger(LocalPort, RemotePeerID, IP, Port, ConnectID, SessionID),
-    Worker ! {enet, disconnected, remote, self(), ConnectID},
+    Worker ! {enet, disconnected, remote, self(), ConnectID, SessionID},
     {stop, normal, S};
 
 connected(cast, {outgoing_command, {H, C = #unsequenced{}}}, S) ->
@@ -796,8 +790,8 @@ connected(cast, {outgoing_command, {H, C = #unsequenced{}}}, S) ->
     %%
     #state{
        host = Host,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        connect_id = ConnectID,
        outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID,
@@ -822,8 +816,8 @@ connected(cast, {outgoing_command, {H, C = #unreliable{}}}, S) ->
     %%
     #state{
        host = Host,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        connect_id = ConnectID,
        outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
@@ -845,8 +839,8 @@ connected(cast, {outgoing_command, {H, C = #reliable{}}}, S) ->
     %%
     #state{
        host = Host,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        connect_id = ConnectID,
        outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
@@ -875,8 +869,8 @@ connected(cast, disconnect, State) ->
     %%
     #state{
        host = Host,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        connect_id = ConnectID,
        outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
@@ -908,8 +902,8 @@ connected({timeout, {ChannelID, SentTime, SequenceNr}}, Data, S) ->
 
     #state{
        host = Host,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        connect_id = ConnectID,
        outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
@@ -940,8 +934,8 @@ connected({timeout, send}, ping, S) ->
 
     #state{
        host = Host,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        connect_id = ConnectID,
        outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID,
@@ -972,8 +966,8 @@ connected(EventType, EventContent, #state{}=S) ->
 disconnecting(enter, _OldState, S) ->
     #state{
        local_port = LocalPort,
-       ip = IP,
-       port = Port,
+       remote_ip = IP,
+       remote_port = Port,
        remote_peer_id = RemotePeerID,
        connect_id = ConnectID,
        outgoing_session_id = SessionID
@@ -991,9 +985,10 @@ disconnecting(cast, {incoming_command, _SentTime, {_H, _C = #acknowledge{}}}, S)
     %%
     #state{
        worker = Worker,
-       connect_id = ConnectID
+       connect_id = ConnectID,
+       outgoing_session_id = SessionID
       } = S,
-    Worker ! {enet, disconnected, local, self(), ConnectID},
+    Worker ! {enet, disconnected, local, self(), ConnectID, SessionID},
     {stop, normal, S};
 
 disconnecting(cast, {incoming_command, _SentTime, {_H, _C}}, S) ->
@@ -1034,30 +1029,32 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
     %%
     #state{
       host = Host,
-      port = Port,
+      remote_port = Port,
       connect_id = ConnectID,
       outgoing_session_id = SessionID
     } = S,
 
     {ok, Commands} = enet_protocol_decode:commands(Packet),
     lists:foreach(
-      fun ({H = #command_header{ please_acknowledge = 0, command = CNum }, C}) ->
+      fun ({H = #command_header{ please_acknowledge = 0 }, C}) ->
               %%
               %% Received command that does not need to be acknowledged.
               %%
               %% - Send the command to self for handling
               %%
-              % io:fwrite(">> ~s ~n", [enet_command:command_name(CNum)]),
+
+              % io:fwrite(">> ~w NoAck ~s ~w ~n", [Port, enet_command:command_name(H#command_header.command), C]),
 
               gen_statem:cast(self(), {incoming_command, SentTime, {H, C}});
-          ({H = #command_header{ please_acknowledge = 1, command = CNum }, C}) ->
+          ({H = #command_header{ please_acknowledge = 1 }, C}) ->
               %%
               %% Received a command that should be acknowledged.
               %%
               %% - Acknowledge the command
               %% - Send the command to self for handling
               %%
-              % io:fwrite(">> ~s ~n", [enet_command:command_name(CNum)]),
+
+              % io:fwrite(">> ~w Ack ~s ~w ~n", [Port, enet_command:command_name(H#command_header.command), C]),
 
               {AckNow, RemotePeerID} =
                   case C of
@@ -1072,7 +1069,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
                   HBin = enet_protocol_encode:command_header(AckH),
                   CBin = enet_protocol_encode:command(AckC),
                   Data = [HBin, CBin],
-                  % io:fwrite("<< AckNow: ~s ~n", [enet_command:command_name(?COMMAND_ACKNOWLEDGE)]),
+                  % io:fwrite("<< AckNow: ~s ~w ~n", [enet_command:command_name(?COMMAND_ACKNOWLEDGE), SentTime]),
                   {sent_time, _AckSentTime} =
                       enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, FromIP, Port, RemotePeerID);
                 _ -> ok
@@ -1081,7 +1078,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               gen_statem:cast(self(), {incoming_command, SentTime, {H, C}})
       end,
       Commands),
-    {keep_state, S#state{ ip = FromIP }};
+    {keep_state, S#state{ remote_ip = FromIP }};
 
 handle_event({call, From}, channels, S) ->
     {keep_state, S, [{reply, From, S#state.channels}]};

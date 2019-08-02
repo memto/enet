@@ -3,7 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 % -include_lib("enet/include/enet.hrl").
--include_lib("/home/nd/working/gsk/enet/src/enet_commands.hrl").
+-include_lib("enet/src/enet_commands.hrl").
 
 -export([
          create_enet_client/0,
@@ -23,9 +23,9 @@ create_enet_client() ->
   % Compressor = enet_compress2:enet_get_compressor(range_coder),
 
   {ok, Client}  = enet:start_host(0, ConnectFun, Compressor, [{peer_limit, 1}]),
-  % {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 18000, 2),
+  {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 18000, 2),
   % {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 17094, 2),
-  {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 17000, 2),
+  % {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 17000, 2),
   % {ok, Peer} = enet:connect_peer(Client, {45,77,23,123}, 18000, 2),
   % {ok, Peer} = enet:connect_peer(Client, {209,59,190,105}, 17096, 2),
 
@@ -41,7 +41,7 @@ create_enet_client() ->
 
 loop(Timeout, Client) ->
   receive
-    #{channels := RChanels ,connect_id := ConnectID, ip := RIp, peer := RPeer, port := RPort} = Remote ->
+    #{peer := Peer, channels := Channels, connect_id := ConnectID, remote_ip := RIp, remote_port := RPort} = Remote ->
       io:fwrite("connected remote= ~w ~n", [Remote]),
       loop(Timeout, Client);
     {enet, 0, #reliable{ data = Data }} ->

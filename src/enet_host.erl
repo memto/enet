@@ -58,14 +58,14 @@ give_socket(Host, Socket) ->
     ok = gen_udp:controlling_process(Socket, Host),
     gen_server:cast(Host, {give_socket, Socket}).
 
-connect(Host, IP, Port, ChannelCount) ->
-    gen_server:call(Host, {connect, IP, Port, ChannelCount}).
+connect(Host, RIP, RPort, ChannelCount) ->
+    gen_server:call(Host, {connect, RIP, RPort, ChannelCount}).
 
-send_outgoing_commands(Host, Commands, ConnectID, SessionID, IP, Port) ->
-    send_outgoing_commands(Host, Commands, ConnectID, SessionID, IP, Port, ?NULL_PEER_ID).
+send_outgoing_commands(Host, Commands, ConnectID, SessionID, RIP, RPort) ->
+    send_outgoing_commands(Host, Commands, ConnectID, SessionID, RIP, RPort, ?NULL_PEER_ID).
 
-send_outgoing_commands(Host, Commands, ConnectID, SessionID, IP, Port, PeerID) ->
-    gen_server:call(Host, {send_outgoing_commands, Commands, ConnectID, SessionID, IP, Port, PeerID}).
+send_outgoing_commands(Host, Commands, ConnectID, SessionID, RIP, RPort, RPeerID) ->
+    gen_server:call(Host, {send_outgoing_commands, Commands, ConnectID, SessionID, RIP, RPort, RPeerID}).
 
 get_port(Host) ->
     gproc:get_value({p, l, port}, Host).
@@ -141,15 +141,15 @@ handle_call({connect, IP, Port, Channels}, _From, S) ->
        connect_fun = ConnectFun
       } = S,
     Ref = make_ref(),
-    LocalPort = get_port(self()),
+    LPort = get_port(self()),
     Reply =
-        try enet_pool:add_peer(LocalPort, Ref) of
+        try enet_pool:add_peer(LPort, Ref) of
             PeerID ->
                 Peer = #enet_peer{
                           handshake_flow = local,
-                          peer_id = PeerID,
-                          ip = IP,
-                          port = Port,
+                          local_peer_id = PeerID,
+                          remote_ip = IP,
+                          remote_port = Port,
                           name = Ref,
                           host = self(),
                           channels = Channels,
@@ -267,17 +267,17 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
     {ok,
      #protocol_header{
         compressed = IsCompressed,
-        peer_id = RecipientPeerID,
+        peer_id = LPeerID,
         sent_time = SentTime
        }=PH,
      Rest1} = enet_protocol_decode:protocol_header(Packet),
 
-    {RemoteChecksum, Rest} = case ?CRC32 of
+    Rest = case ?CRC32 of
       false ->
-        {undefined, Rest1};
+        Rest1;
       true ->
-        <<XX:32, Rest2/binary>> = Rest1,
-        {XX, Rest2}
+        <<_:32, Rest2/binary>> = Rest1,
+        Rest2
     end,
 
 
@@ -289,50 +289,56 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
               Out
         end,
 
-    PHBin = enet_protocol_encode:protocol_header(PH),
-    Payload = case ConnectID of
-      undefined ->
-        <<PHBin/binary, 0:32, Commands/binary>>;
-      _ ->
-        <<PHBin/binary, ConnectID:32, Commands/binary>>
+    _Checksum_ok = case ?CRC32 of
+      true ->
+        <<RemoteChecksum:32, _/binary>> = Rest1,
+
+        PHBin = enet_protocol_encode:protocol_header(PH),
+        Payload = case LPeerID of
+          ?MAX_PEER_ID ->
+            <<PHBin/binary, 0:32, Commands/binary>>;
+          _ ->
+            <<PHBin/binary, ConnectID:32, Commands/binary>>
+        end,
+        Checksum = erlang:crc32(Payload),
+
+        % io:fwrite("Checksum input: ~w ~n", [Payload]),
+        % io:fwrite("Checksum/RemoteChecksum: ~w/~w  LPeerID/ConnectID=~w/~w ~n", [Checksum, RemoteChecksum, LPeerID, ConnectID]),
+        Checksum == RemoteChecksum;
+      false ->
+        true
     end,
 
-    % io:fwrite("Checksum input: ~w ~n", [Payload]),
-    Checksum = erlang:crc32(Payload),
-    % io:fwrite("Checksum/RemoteChecksum: ~w/~w ConnectID=~w ~n", [Checksum, RemoteChecksum, ConnectID]),
-
-    LocalPort = get_port(self()),
-    case RecipientPeerID of
-        ?NULL_PEER_ID ->
+    LPort = get_port(self()),
+    case LPeerID of
+        ?MAX_PEER_ID ->
             %% No particular peer is the receiver of this packet.
             %% Create a new peer.
             Ref = make_ref(),
-            try enet_pool:add_peer(LocalPort, Ref) of
+            try enet_pool:add_peer(LPort, Ref) of
                 PeerID ->
                     Peer = #enet_peer{
                               handshake_flow = remote,
-                              peer_id = PeerID,
-                              ip = RIP,
-                              port = RPort,
+                              local_peer_id = PeerID,
+                              remote_ip = RIP,
+                              remote_port = RPort,
                               name = Ref,
                               host = self(),
                               connect_fun = ConnectFun
                              },
                     {ok, Pid} = start_peer(Peer),
-                    ToPeerTime1 = erlang:system_time(1000),
-                    % io:fwrite("UDPTime1 = ~w ~n", [ToPeerTime1 - UDPTime]),
 
+                    % io:fwrite("UDPTime1 = ~w ~n", [erlang:system_time(1000) - UDPTime]),
                     enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
             catch
                 error:pool_full -> {error, reached_peer_limit};
                 error:exists    -> {error, exists}
             end;
-        PeerID ->
-            case enet_pool:pick_peer(LocalPort, PeerID) of
+        LPeerID ->
+            case enet_pool:pick_peer(LPort, LPeerID) of
                 false -> ok; %% Unknown peer - drop the packet
                 Pid ->
-                    ToPeerTime2 = erlang:system_time(1000),
-                    % io:fwrite("UDPTime2 = ~w ~n", [ToPeerTime2 - UDPTime]),
+                    % io:fwrite("UDPTime2 = ~w ~n", [erlang:system_time(1000) - UDPTime]),
                     enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
             end
     end,
@@ -344,8 +350,8 @@ handle_info({gproc, unreg, _Ref, {n, l, {enet_peer, Ref}}}, S) ->
     %%
     %% - Remove it from the pool
     %%
-    LocalPort = get_port(self()),
-    true = enet_pool:remove_peer(LocalPort, Ref),
+    LPort = get_port(self()),
+    true = enet_pool:remove_peer(LPort, Ref),
     {noreply, S}.
 
 
@@ -373,8 +379,8 @@ get_time() ->
     erlang:system_time(1000) band 16#FFFF.
 
 start_peer(Peer = #enet_peer{ name = Ref }) ->
-    LocalPort = gproc:get_value({p, l, port}, self()),
-    PeerSup = gproc:where({n, l, {enet_peer_sup, LocalPort}}),
+    LPort = gproc:get_value({p, l, port}, self()),
+    PeerSup = gproc:where({n, l, {enet_peer_sup, LPort}}),
     {ok, Pid} = enet_peer_sup:start_peer(PeerSup, Peer),
     _Ref = gproc:monitor({n, l, {enet_peer, Ref}}),
     {ok, Pid}.
