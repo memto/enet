@@ -25,8 +25,9 @@ create_enet_client() ->
   {ok, Client}  = enet:start_host(0, ConnectFun, Compressor, [{peer_limit, 1}]),
   % {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 18000, 2),
   % {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 17094, 2),
+  {ok, Peer} = enet:connect_peer(Client, {127,0,0,1}, 17000, 2),
   % {ok, Peer} = enet:connect_peer(Client, {45,77,23,123}, 18000, 2),
-  {ok, Peer} = enet:connect_peer(Client, {209,59,190,105}, 17096, 2),
+  % {ok, Peer} = enet:connect_peer(Client, {209,59,190,105}, 17096, 2),
 
   % 209.59.190.105:17096
 

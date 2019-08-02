@@ -357,21 +357,7 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
     %% - Send a VerifyConnect command (use peer ID)
     %% - Start in the 'verifying_connect' state
     %%
-    #connect{
-       outgoing_peer_id             = RemotePeerID,
-       incoming_session_id          = _IncomingSessionID,
-       outgoing_session_id          = OutgoingSessionID,
-       mtu                          = MTU,
-       window_size                  = WindowSize,
-       channel_count                = ChannelCount,
-       incoming_bandwidth           = IncomingBandwidth,
-       outgoing_bandwidth           = OutgoingBandwidth,
-       packet_throttle_interval     = PacketThrottleInterval,
-       packet_throttle_acceleration = PacketThrottleAcceleration,
-       packet_throttle_deceleration = PacketThrottleDeceleration,
-       connect_id                   = ConnectID,
-       data                         = _Data
-      } = C,
+
     #state{
        host = Host,
        ip = IP,
@@ -380,42 +366,87 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
        incoming_session_id = IncomingSessionID,
        outgoing_session_id = OutgoingSessionID,
        outgoing_reliable_sequence_number = SequenceNr
-      } = S,
-    gproc:reg({p, l, mtu}, MTU),
-    HostChannelLimit = enet_host:get_channel_limit(Host),
-    HostIncomingBandwidth = enet_host:get_incoming_bandwidth(Host),
-    HostOutgoingBandwidth = enet_host:get_outgoing_bandwidth(Host),
-    {VCH, VCC} = enet_command:verify_connect(C,
-                                             PeerID,
-                                             IncomingSessionID,
-                                             OutgoingSessionID,
-                                             HostChannelLimit,
-                                             HostIncomingBandwidth,
-                                             HostOutgoingBandwidth,
-                                             SequenceNr),
-    HBin = enet_protocol_encode:command_header(VCH),
-    CBin = enet_protocol_encode:command(VCC),
-    Data = [HBin, CBin],
-    {sent_time, SentTime} =
-        enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, IP, Port, RemotePeerID),
-    ChannelID = 16#FF,
-    VerifyConnectTimeout =
-        make_resend_timer(
-          ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
-    NewS = S#state{
-             remote_peer_id = RemotePeerID,
-             %% channels = Channels,
-             connect_id = ConnectID,
-             incoming_bandwidth = IncomingBandwidth,
-             outgoing_bandwidth = OutgoingBandwidth,
-             window_size = WindowSize,
-             packet_throttle_interval = PacketThrottleInterval,
-             packet_throttle_acceleration = PacketThrottleAcceleration,
-             packet_throttle_deceleration = PacketThrottleDeceleration,
-             outgoing_reliable_sequence_number = SequenceNr + 1,
-             channel_count = ChannelCount
-            },
-    {next_state, verifying_connect, NewS, [VerifyConnectTimeout]};
+    } = S,
+
+    #connect{
+       outgoing_peer_id             = RemotePeerID,
+       incoming_session_id          = ConnectIncomingSessionID,
+       outgoing_session_id          = ConnectOutgoingSessionID,
+       mtu                          = ConnectMTU,
+       window_size                  = ConnectWindowSize,
+       channel_count                = ConnectChannelCount,
+       incoming_bandwidth           = IncomingBandwidth,
+       outgoing_bandwidth           = OutgoingBandwidth,
+       packet_throttle_interval     = PacketThrottleInterval,
+       packet_throttle_acceleration = PacketThrottleAcceleration,
+       packet_throttle_deceleration = PacketThrottleDeceleration,
+       connect_id                   = ConnectID,
+       data                         = _Data
+      } = C,
+
+      io:fwrite("acknowledging_connect ~w ~n", [ConnectChannelCount]),
+
+      case S of
+          #state{} when
+            ConnectChannelCount >= ?MIN_CHANNEL_COUNT,
+            ConnectChannelCount =< ?MAX_CHANNEL_COUNT
+            ->
+              HostChannelLimit = enet_host:get_channel_limit(Host),
+              HostIncomingBandwidth = enet_host:get_incoming_bandwidth(Host),
+              HostOutgoingBandwidth = enet_host:get_outgoing_bandwidth(Host),
+
+              ChannelCountSet = min(C#connect.channel_count, HostChannelLimit),
+              IncomingSessionIDSet = enet_command:calculate_session_id(C#connect.incoming_session_id, OutgoingSessionID),
+              OutgoingSessionIDSet = enet_command:calculate_session_id(C#connect.outgoing_session_id, IncomingSessionID),
+              MTUSet = enet_command:clamp(C#connect.mtu, ?MAX_MTU, ?MIN_MTU),
+              WindowSizeSet = enet_command:calculate_window_size(IncomingBandwidth, C#connect.window_size),
+
+              io:fwrite("~w/~w ~n", [ConnectChannelCount, HostChannelLimit]),
+
+              {VCH, VCC} = enet_command:verify_connect(
+                                         PeerID,
+                                         OutgoingSessionIDSet,
+                                         IncomingSessionIDSet,
+                                         MTUSet,
+                                         WindowSizeSet,
+                                         ChannelCountSet,
+                                         HostIncomingBandwidth,
+                                         HostOutgoingBandwidth,
+                                         PacketThrottleInterval,
+                                         PacketThrottleAcceleration,
+                                         PacketThrottleDeceleration,
+                                         ConnectID,
+                                         SequenceNr),
+              HBin = enet_protocol_encode:command_header(VCH),
+              CBin = enet_protocol_encode:command(VCC),
+              Data = [HBin, CBin],
+              {sent_time, SentTime} =
+                  enet_host:send_outgoing_commands(Host, Data, ConnectID, IncomingSessionIDSet, IP, Port, RemotePeerID),
+              ChannelID = 16#FF,
+              VerifyConnectTimeout =
+                  make_resend_timer(
+                    ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
+
+              NewS = S#state{
+                channel_count = ChannelCountSet,
+                connect_id = ConnectID,
+                remote_peer_id = RemotePeerID,
+                incoming_bandwidth = IncomingBandwidth,
+                outgoing_bandwidth = OutgoingBandwidth,
+                packet_throttle_interval = PacketThrottleInterval,
+                packet_throttle_acceleration = PacketThrottleAcceleration,
+                packet_throttle_deceleration = PacketThrottleDeceleration,
+
+                incoming_session_id = OutgoingSessionIDSet,
+                outgoing_session_id = IncomingSessionIDSet,
+                mtu = MTUSet,
+                window_size = WindowSizeSet,
+                outgoing_reliable_sequence_number = SequenceNr + 1
+              },
+              {next_state, verifying_connect, NewS};
+          _Invalid ->
+              {stop, connect_channel_count_invalid, S}
+      end;
 
 acknowledging_connect({timeout, {_ChannelID, _SentTime, _SequenceNr}}, _, S) ->
     {stop, timeout, S};

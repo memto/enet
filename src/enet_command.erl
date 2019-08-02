@@ -6,7 +6,7 @@
 -export([
          acknowledge/2,
          connect/12,
-         verify_connect/8,
+         verify_connect/13,
          sequenced_disconnect/0,
          unsequenced_disconnect/0,
          ping/1,
@@ -14,6 +14,12 @@
          send_unreliable/3,
          send_reliable/3,
          command_name/1
+        ]).
+
+-export([
+         clamp/3,
+         calculate_window_size/2,
+         calculate_session_id/2
         ]).
 
 command_name(CmdNum) ->
@@ -88,20 +94,19 @@ connect(OutgoingPeerID,
     }.
 
 
-verify_connect(C = #connect{},
-               OutgoingPeerID,
+verify_connect(OutgoingPeerID,
                IncomingSessionID,
                OutgoingSessionID,
-               HostChannelLimit,
+               MTU,
+               WindowSize,
+               ChannelCount,
                IncomingBandwidth,
                OutgoingBandwidth,
+               PacketThrottleInterval,
+               PacketThrottleAcceleration,
+               PacketThrottleDeceleration,
+               ConnectID,
                OutgoingReliableSequenceNumber) ->
-    WindowSize =
-        calculate_window_size(IncomingBandwidth, C#connect.window_size),
-    ISID =
-        calculate_session_id(C#connect.incoming_session_id, OutgoingSessionID),
-    OSID =
-        calculate_session_id(C#connect.outgoing_session_id, IncomingSessionID),
     {
       #command_header{
          command = ?COMMAND_VERIFY_CONNECT,
@@ -110,17 +115,17 @@ verify_connect(C = #connect{},
         },
       #verify_connect{
          outgoing_peer_id = OutgoingPeerID,
-         incoming_session_id = ISID,
-         outgoing_session_id = OSID,
-         mtu = clamp(C#connect.mtu, ?MAX_MTU, ?MIN_MTU),
+         incoming_session_id = IncomingSessionID,
+         outgoing_session_id = OutgoingSessionID,
+         mtu = MTU,
          window_size = WindowSize,
-         channel_count = min(C#connect.channel_count, HostChannelLimit),
+         channel_count = ChannelCount,
          incoming_bandwidth = IncomingBandwidth,
          outgoing_bandwidth = OutgoingBandwidth,
-         packet_throttle_interval = C#connect.packet_throttle_interval,
-         packet_throttle_acceleration = C#connect.packet_throttle_acceleration,
-         packet_throttle_deceleration = C#connect.packet_throttle_deceleration,
-         connect_id = C#connect.connect_id
+         packet_throttle_interval = PacketThrottleInterval,
+         packet_throttle_acceleration = PacketThrottleAcceleration,
+         packet_throttle_deceleration = PacketThrottleDeceleration,
+         connect_id = ConnectID
         }
     }.
 
@@ -191,11 +196,6 @@ send_reliable(ChannelID, ReliableSequenceNumber, Data) ->
          data = Data
         }
     }.
-
-
-%%%
-%%% Internal functions
-%%%
 
 clamp(X, Max, Min) ->
     max(Min, min(Max, X)).

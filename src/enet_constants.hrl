@@ -45,3 +45,6 @@
 -define(PEER_RELIABLE_WINDOWS             , 16).
 -define(PEER_RELIABLE_WINDOW_SIZE         , 16#1000).
 -define(PEER_FREE_RELIABLE_WINDOWS        , 8).
+
+-define(PROTOCOL_HEADER_SESSION_MASK      , (3 bsl 12)).
+-define(PROTOCOL_HEADER_SESSION_SHIFT     , 12).
