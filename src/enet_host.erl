@@ -31,8 +31,6 @@
          code_change/3
         ]).
 
--define(CRC32, true).
-
 -define(NULL_PEER_ID, ?MAX_PEER_ID).
 
 -record(state,

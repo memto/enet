@@ -20,7 +20,6 @@
 %%
 %% Protocol Header
 %%
-
 -define(PROTOCOL_HEADER(SentTimeIncluded, Compressed, SessionID, PeerID,
                         Rest),
         <<

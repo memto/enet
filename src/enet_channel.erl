@@ -34,6 +34,7 @@
           incoming_unreliable_sequence_number = 0,
           outgoing_reliable_sequence_number = 1,
           outgoing_unreliable_sequence_number = 1,
+          reliable_fragment_command = nil,
           reliable_windows, %% reliableWindows [ENET_PEER_RELIABLE_WINDOWS] (uint16 * 16 = 32 bytes)
           used_reliable_windows = 0,
           sys_parent,
@@ -153,16 +154,111 @@ loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
             NewS = S#state{ incoming_reliable_sequence_number = N + 1 },
             loop(NewS);
 
-        {send_reliable, Data} ->
-            N = S#state.outgoing_reliable_sequence_number,
-            {H, C} = enet_command:send_reliable(ID, N, Data),
-            ok = enet_peer:send_command(Peer, {H, C}),
-            NewS = S#state{ outgoing_reliable_sequence_number = N + 1 },
+        {recv_reliable, {
+           #command_header{ reliable_sequence_number = N },
+           C = #fragment{}
+          }} when N =:= S#state.incoming_reliable_sequence_number ->
+            {FullCmd, S1} = join_data(recv_reliable, C, S),
+            case FullCmd of
+              nil -> ok;
+              _ -> Worker ! {enet, ID, FullCmd}
+            end,
+            NewS = S1#state{ incoming_reliable_sequence_number = N + 1 },
             loop(NewS);
 
+        {send_reliable, Data} ->
+            {Commands, NewS} = split_data(send_reliable, Data, S),
+
+            enet_peer:send_reliable_outgoing_commands(Peer, Commands),
+
+            % io:fwrite("<< send_reliable Commands=~w ~n", [Commands]),
+            % lists:foreach(fun(Cmd) ->
+            %   enet_peer:send_command(Peer, Cmd)
+            % end, Commands),
+
+            loop(NewS);
         stop ->
             stopped
     end.
+
+
+% start_sequence_number = StartSN,
+% data_length           = DataLen,
+% fragment_count        = FragCnt,
+% fragment_number       = FragNum,
+% total_length          = TotalLen,
+% fragment_offset       = FragOff,
+% data                  = Data
+join_data(recv_reliable, C = #fragment{}, #state{reliable_fragment_command = RFC}=S) ->
+  RFC1 = case RFC of
+    nil ->
+      FragmentData = C#fragment.data,
+      FillDataLen = (C#fragment.total_length - byte_size(FragmentData))*8,
+      CmdData = <<FragmentData/binary, 0:FillDataLen>>,
+      C#fragment{data=CmdData, fragment_count=C#fragment.fragment_count-1};
+    StartCmd ->
+      if
+        C#fragment.start_sequence_number =:= StartCmd#fragment.start_sequence_number ->
+          #fragment{
+            fragment_offset = FragmentOff,
+            data = FragmentData
+          } = C,
+          DataLen = byte_size(FragmentData),
+          <<Data1:FragmentOff/binary, _:DataLen/binary, Rest/binary>> = StartCmd#fragment.data,
+          CmdData = <<Data1:FragmentOff/binary, FragmentData/binary, Rest/binary>>,
+          StartCmd#fragment{data=CmdData, fragment_count=StartCmd#fragment.fragment_count-1};
+        true -> new_start_sequence_number
+      end
+  end,
+
+  case RFC1#fragment.fragment_count of
+    0 ->
+      {#reliable{data = RFC1#fragment.data}, S#state{reliable_fragment_command=nil}};
+    _ ->
+      {nil, S#state{reliable_fragment_command=RFC1}}
+  end.
+
+split_data(send_reliable, Data, #state{id = ID}=S) ->
+  PeerMTU = enet_peer:get_mtu(S#state.peer),
+
+  FragLen1 = PeerMTU -
+  (?PROTOCOL_HEADER_SIZE + ?PROTOCOL_COMMAND_HEADER_SIZE + ?PROTOCOL_SEND_FRAGMENT_SIZE),
+  FragLenX = case ?CRC32 of
+    true -> FragLen1 - 4;
+    _ -> FragLen1
+  end,
+
+  TotalLen = byte_size(Data),
+  if
+    TotalLen > FragLenX ->
+      StartSN = S#state.outgoing_reliable_sequence_number,
+      FragCnt = (TotalLen + FragLenX - 1) div FragLenX,
+      lists:foldl(fun(X, ACC) ->
+        {Commands1, S1} = ACC,
+        N = S1#state.outgoing_reliable_sequence_number,
+
+        FragNum = X,
+        FragOff = FragNum * FragLenX,
+        DataLen = min(FragLenX, TotalLen - FragOff),
+        <<_:FragOff/binary, DataX:DataLen/binary, _Rest/binary>> = Data,
+
+        % send_fragment(ChannelID, ReliableSequenceNumber, StartSN, DataLen, FragCnt, FragNum, TotalLen, FragOff, Data) ->
+        Cmd = enet_command:send_fragment(ID, N, StartSN, DataLen, FragCnt, FragNum, TotalLen, FragOff, DataX),
+
+        NewCmds = Commands1 ++ [Cmd],
+        NewS = S1#state{outgoing_reliable_sequence_number = N + 1},
+
+        {NewCmds, NewS}
+      end, {[], S}, lists:seq(0, FragCnt-1));
+    true ->
+      N = S#state.outgoing_reliable_sequence_number,
+      {H, C} = enet_command:send_reliable(ID, N, Data),
+      Commands = [{H, C}],
+
+      NewS = S#state{ outgoing_reliable_sequence_number = N + 1 },
+      {Commands, NewS}
+  end.
+
 
 
 %%%

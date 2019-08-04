@@ -14,6 +14,7 @@
          channel/2,
          recv_incoming_packet/4,
          send_command/2,
+         send_reliable_outgoing_commands/2,
          get_connect_id/1,
          get_mtu/1,
          get_name/1,
@@ -139,6 +140,9 @@ recv_incoming_packet(Peer, FromIP, SentTime, Packet) ->
 
 send_command(Peer, {H, C}) ->
     gen_statem:cast(Peer, {outgoing_command, {H, C}}).
+
+send_reliable_outgoing_commands(Peer, Commands) ->
+    gen_statem:cast(Peer, {send_reliable_outgoing_commands, Commands}).
 
 get_connect_id(Peer) ->
     gproc:get_value({p, l, connect_id}, Peer).
@@ -601,12 +605,12 @@ connected(enter, _OldState, S) ->
     ok = enet_disconnector:set_trigger(LocalPort, RemotePeerID, IP, Port, ConnectID, SessionID),
     Channels = start_channels(N),
     PeerInfo = #{
-                 remote_ip => IP,
-                 remote_port => Port,
                  peer => self(),
                  channels => Channels,
                  connect_id => ConnectID,
-                 session_id => SessionID
+                 session_id => SessionID,
+                 remote_ip => IP,
+                 remote_port => Port
                 },
     case start_worker(ConnectFun, PeerInfo) of
         {error, Reason} ->
@@ -738,10 +742,9 @@ connected(cast, {incoming_command, _SentTime, {H, C = #fragment{}}}, S) ->
     %% - Forward the command to the relevant channel
     %% - Reset the receive-timer
     %%
-    io:fwrite("fragment ~w ~n", [C]),
     #command_header{ channel_id = ChannelID } = H,
     #state{ channels = #{ ChannelID := Channel } } = S,
-    % ok = enet_channel:recv_reliable(Channel, {H, C}),
+    ok = enet_channel:recv_reliable(Channel, {H, C}),
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
@@ -830,9 +833,46 @@ connected(cast, {outgoing_command, {H, C = #unreliable{}}}, S) ->
     SendTimeout = reset_send_timer(),
     {keep_state, S, [SendTimeout]};
 
+connected(cast, {send_reliable_outgoing_commands, Commands}, S) ->
+    lists:foreach(fun(Cmd) ->
+      enet_peer:send_command(self(), Cmd)
+    end, Commands),
+
+    {keep_state, S};
+
 connected(cast, {outgoing_command, {H, C = #reliable{}}}, S) ->
     %%
     %% Sending a Sequenced, reliable command.
+    %%
+    %% - Forward the encoded command to the host
+    %% - Reset the send-timer
+    %%
+    #state{
+       host = Host,
+       remote_ip = IP,
+       remote_port = Port,
+       connect_id = ConnectID,
+       outgoing_session_id = SessionID,
+       remote_peer_id = RemotePeerID
+      } = S,
+    #command_header{
+       channel_id = ChannelID,
+       reliable_sequence_number = SequenceNr
+      } = H,
+    HBin = enet_protocol_encode:command_header(H),
+    CBin = enet_protocol_encode:command(C),
+    Data = [HBin, CBin],
+    {sent_time, SentTime} =
+        enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
+    SendReliableTimeout =
+        make_resend_timer(
+          ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
+    SendTimeout = reset_send_timer(),
+    {keep_state, S, [SendReliableTimeout, SendTimeout]};
+
+connected(cast, {outgoing_command, {H, C = #fragment{}}}, S) ->
+    %%
+    %% Sending a Sequenced, fragment command.
     %%
     %% - Forward the encoded command to the host
     %% - Reset the send-timer

@@ -13,6 +13,7 @@
          send_unsequenced/2,
          send_unreliable/3,
          send_reliable/3,
+         send_fragment/9,
          command_name/1
         ]).
 
@@ -194,6 +195,24 @@ send_reliable(ChannelID, ReliableSequenceNumber, Data) ->
         },
       #reliable{
          data = Data
+        }
+    }.
+
+send_fragment(ChannelID, ReliableSequenceNumber, StartSN, DataLen, FragCnt, FragNum, TotalLen, FragOff, Data) ->
+    {
+      #command_header{
+         command = ?COMMAND_SEND_FRAGMENT,
+         channel_id = ChannelID,
+         reliable_sequence_number = ReliableSequenceNumber
+        },
+      #fragment{
+          start_sequence_number = StartSN,
+          data_length           = DataLen,
+          fragment_count        = FragCnt,
+          fragment_number       = FragNum,
+          total_length          = TotalLen,
+          fragment_offset       = FragOff,
+          data                  = Data
         }
     }.
 

@@ -1,10 +1,12 @@
 -include_lib("enet/include/enet.hrl").
 -include("enet_constants.hrl").
 
+-define(CRC32, true).
+
 %%
 %% Protocol Header
 %%
-
+-define(PROTOCOL_HEADER_SIZE, 4).
 -record(protocol_header,
         {
           compressed = 0,
@@ -17,7 +19,7 @@
 %%
 %% Command Header
 %%
-
+-define(PROTOCOL_COMMAND_HEADER_SIZE, 4).
 -record(command_header,
         {
           please_acknowledge       = 0,
@@ -104,10 +106,11 @@
 %%
 %% Send Fragment Command
 %%
-
+-define(PROTOCOL_SEND_FRAGMENT_SIZE, 20).
 -record(fragment,
         {
           start_sequence_number = 0,
+          data_length           = 0,
           fragment_count        = 0,
           fragment_number       = 0,
           total_length          = 0,
