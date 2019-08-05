@@ -781,6 +781,30 @@ connected(cast, {incoming_command, _SentTime, {_H, #disconnect{}}}, S) ->
     Worker ! {enet, disconnected, remote, self(), ConnectID, SessionID},
     {stop, normal, S};
 
+connected(cast, {incoming_command, _SentTime, Cmd}, S) ->
+    %%
+    %% Received unhandled command.
+    %%
+    %% - Notify worker application
+    %% - Stop
+    %%
+
+    io:fwrite("Received unhandled command: ~w ~n", [Cmd]),
+
+    % #state{
+    %    worker = Worker,
+    %    local_port = LocalPort,
+    %    remote_ip = IP,
+    %    remote_port = Port,
+    %    remote_peer_id = RemotePeerID,
+    %    connect_id = ConnectID,
+    %    outgoing_session_id = SessionID
+    %   } = S,
+    % ok = enet_disconnector:unset_trigger(LocalPort, RemotePeerID, IP, Port, ConnectID, SessionID),
+    % Worker ! {enet, disconnected, remote, self(), ConnectID, SessionID},
+    {stop, normal, S};
+
+
 connected(cast, {outgoing_command, {H, C = #unsequenced{}}}, S) ->
     %%
     %% Sending an Unsequenced, unreliable command.
