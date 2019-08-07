@@ -1005,6 +1005,7 @@ connected(EventType, EventContent, #state{}=S) ->
 
 disconnecting(enter, _OldState, S) ->
     #state{
+       worker = Worker,
        local_port = LocalPort,
        remote_ip = IP,
        remote_port = Port,
@@ -1013,7 +1014,10 @@ disconnecting(enter, _OldState, S) ->
        outgoing_session_id = SessionID
       } = S,
     ok = enet_disconnector:unset_trigger(LocalPort, RemotePeerID, IP, Port, ConnectID, SessionID),
-    {keep_state, S};
+    Worker ! {enet, disconnected, local, self(), ConnectID, SessionID},
+    {stop, normal, S};
+
+    % {keep_state, S};
 
 disconnecting(cast, {incoming_command, _SentTime, {_H, _C = #acknowledge{}}}, S) ->
     %%
