@@ -11,7 +11,7 @@
          unsequenced_disconnect/0,
          ping/1,
          send_unsequenced/2,
-         send_unreliable/3,
+         send_unreliable/4,
          send_reliable/3,
          send_fragment/9,
          command_name/1
@@ -174,11 +174,12 @@ send_unsequenced(ChannelID, Data) ->
         }
     }.
 
-send_unreliable(ChannelID, SequenceNumber, Data) ->
+send_unreliable(ChannelID, ReliableSequenceNumber, SequenceNumber, Data) ->
     {
       #command_header{
          command = ?COMMAND_SEND_UNRELIABLE,
-         channel_id = ChannelID
+         channel_id = ChannelID,
+         reliable_sequence_number = ReliableSequenceNumber
         },
       #unreliable{
          sequence_number = SequenceNumber,

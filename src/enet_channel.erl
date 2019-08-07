@@ -140,8 +140,10 @@ loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
             end;
 
         {send_unreliable, Data} ->
+            RN = S#state.outgoing_reliable_sequence_number - 1,
             N = S#state.outgoing_unreliable_sequence_number,
-            {H, C} = enet_command:send_unreliable(ID, N, Data),
+            {H, C} = enet_command:send_unreliable(ID, RN, N, Data),
+            % io:fwrite(" << send_unreliable ~w ~n", [{H, C}]),
             ok = enet_peer:send_command(Peer, {H, C}),
             NewS = S#state{ outgoing_unreliable_sequence_number = N + 1 },
             loop(NewS);
@@ -151,7 +153,7 @@ loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
            C = #reliable{}
           }} when N =:= S#state.incoming_reliable_sequence_number ->
             Worker ! {enet, ID, C},
-            NewS = S#state{ incoming_reliable_sequence_number = N + 1 },
+            NewS = S#state{ incoming_reliable_sequence_number = N + 1, incoming_unreliable_sequence_number = 1},
             loop(NewS);
 
         {recv_reliable, {
@@ -159,24 +161,19 @@ loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
            C = #fragment{}
           }} when N =:= S#state.incoming_reliable_sequence_number ->
             {FullCmd, S1} = join_data(recv_reliable, C, S),
-            case FullCmd of
-              nil -> ok;
-              _ -> Worker ! {enet, ID, FullCmd}
+            NewS = case FullCmd of
+              nil ->
+                S1#state{ incoming_reliable_sequence_number = N + 1 };
+              _ ->
+                Worker ! {enet, ID, FullCmd},
+                S1#state{ incoming_reliable_sequence_number = N + 1, incoming_unreliable_sequence_number = 1 }
             end,
-            NewS = S1#state{ incoming_reliable_sequence_number = N + 1 },
             loop(NewS);
 
         {send_reliable, Data} ->
             {Commands, NewS} = split_data(send_reliable, Data, S),
-
             enet_peer:send_reliable_outgoing_commands(Peer, Commands),
-
-            % io:fwrite("<< send_reliable Commands=~w ~n", [Commands]),
-            % lists:foreach(fun(Cmd) ->
-            %   enet_peer:send_command(Peer, Cmd)
-            % end, Commands),
-
-            loop(NewS);
+            loop(NewS#state{outgoing_unreliable_sequence_number = 1});
         stop ->
             stopped
     end.
@@ -253,8 +250,8 @@ split_data(send_reliable, Data, #state{id = ID}=S) ->
     true ->
       N = S#state.outgoing_reliable_sequence_number,
       {H, C} = enet_command:send_reliable(ID, N, Data),
+      % io:fwrite(" << send_reliable ~w ~n", [{H, C}]),
       Commands = [{H, C}],
-
       NewS = S#state{ outgoing_reliable_sequence_number = N + 1 },
       {Commands, NewS}
   end.
