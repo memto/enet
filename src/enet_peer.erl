@@ -274,7 +274,6 @@ connecting(enter, _OldState, S) ->
           ConnectID,
           SequenceNr),
 
-    % io:fwrite("<< COMMAND_CONNECT ~n"),
 
     HBin = enet_protocol_encode:command_header(ConnectH),
     CBin = enet_protocol_encode:command(ConnectC),
@@ -529,7 +528,6 @@ acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_
             HBin = enet_protocol_encode:command_header(AckH),
             CBin = enet_protocol_encode:command(AckC),
             Data = [HBin, CBin],
-            % io:fwrite("<< AckAfter: ~s ~n", [enet_command:command_name(?COMMAND_ACKNOWLEDGE)]),
             {sent_time, _AckSentTime} =
                 enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, FromIP, Port, RemotePeerID),
 
@@ -1087,7 +1085,6 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %% - Send the command to self for handling
               %%
 
-              % io:fwrite(">> ~w NoAck ~s ~w ~n", [Port, enet_command:command_name(H#command_header.command), C]),
 
               gen_statem:cast(self(), {incoming_command, SentTime, {H, C}});
           ({H = #command_header{ please_acknowledge = 1 }, C}) ->
@@ -1098,7 +1095,6 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %% - Send the command to self for handling
               %%
 
-              % io:fwrite(">> ~w Ack ~s ~w ~n", [Port, enet_command:command_name(H#command_header.command), C]),
 
               {AckNow, RemotePeerID} =
                   case C of
@@ -1113,7 +1109,6 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
                   HBin = enet_protocol_encode:command_header(AckH),
                   CBin = enet_protocol_encode:command(AckC),
                   Data = [HBin, CBin],
-                  % io:fwrite("<< AckNow: ~s ~w ~n", [enet_command:command_name(?COMMAND_ACKNOWLEDGE), SentTime]),
                   {sent_time, _AckSentTime} =
                       enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, FromIP, Port, RemotePeerID);
                 _ -> ok

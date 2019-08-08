@@ -143,7 +143,6 @@ loop(S = #state{ id = ID, peer = Peer, worker = Worker }) ->
             RN = S#state.outgoing_reliable_sequence_number - 1,
             N = S#state.outgoing_unreliable_sequence_number,
             {H, C} = enet_command:send_unreliable(ID, RN, N, Data),
-            % io:fwrite(" << send_unreliable ~w ~n", [{H, C}]),
             ok = enet_peer:send_command(Peer, {H, C}),
             NewS = S#state{ outgoing_unreliable_sequence_number = N + 1 },
             loop(NewS);
@@ -239,7 +238,7 @@ split_data(send_reliable, Data, #state{id = ID}=S) ->
         DataLen = min(FragLenX, TotalLen - FragOff),
         <<_:FragOff/binary, DataX:DataLen/binary, _Rest/binary>> = Data,
 
-        % send_fragment(ChannelID, ReliableSequenceNumber, StartSN, DataLen, FragCnt, FragNum, TotalLen, FragOff, Data) ->
+        % send_fragment(ChannelID, ReliableSequenceNumber, StartSN, DataLen, FragCnt, FragNum, TotalLen, FragOff, Data)
         Cmd = enet_command:send_fragment(ID, N, StartSN, DataLen, FragCnt, FragNum, TotalLen, FragOff, DataX),
 
         NewCmds = Commands1 ++ [Cmd],
@@ -250,7 +249,6 @@ split_data(send_reliable, Data, #state{id = ID}=S) ->
     true ->
       N = S#state.outgoing_reliable_sequence_number,
       {H, C} = enet_command:send_reliable(ID, N, Data),
-      % io:fwrite(" << send_reliable ~w ~n", [{H, C}]),
       Commands = [{H, C}],
       NewS = S#state{ outgoing_reliable_sequence_number = N + 1 },
       {Commands, NewS}
