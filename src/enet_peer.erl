@@ -4,6 +4,7 @@
 -include("enet_peer.hrl").
 -include("enet_commands.hrl").
 -include("enet_protocol.hrl").
+-include("enet_helpers.hrl").
 
 %% API
 -export([
@@ -138,11 +139,11 @@ channel(Peer, ID) ->
 recv_incoming_packet(Peer, FromIP, SentTime, Packet) ->
     gen_statem:cast(Peer, {incoming_packet, FromIP, SentTime, Packet}).
 
-send_command(Peer, {H, C}) ->
-    gen_statem:cast(Peer, {outgoing_command, {H, C}}).
-
 send_reliable_outgoing_commands(Peer, Commands) ->
     gen_statem:cast(Peer, {send_reliable_outgoing_commands, Commands}).
+
+send_command(Peer, {H, C}) ->
+    gen_statem:cast(Peer, {outgoing_command, {H, C}}).
 
 get_connect_id(Peer) ->
     gproc:get_value({p, l, connect_id}, Peer).
@@ -274,6 +275,7 @@ connecting(enter, _OldState, S) ->
           ConnectID,
           SequenceNr),
 
+    ?DBG_PEER_HS("<<|| [~w] connecting ~s ~w ~n", [S#state.local_port, enet_command:command_name(ConnectH), {ConnectH, ConnectC}]),
 
     HBin = enet_protocol_encode:command_header(ConnectH),
     CBin = enet_protocol_encode:command(ConnectC),
@@ -291,13 +293,16 @@ connecting(enter, _OldState, S) ->
             },
     {keep_state, NewS, [ConnectTimeout]};
 
-connecting(cast, {incoming_command, _SentTime, {H, #acknowledge{}}}, S) ->
+connecting(cast, {incoming_command, _SentTime, {H, C = #acknowledge{}}}, S) ->
     %%
     %% Received an Acknowledge command in the 'connecting' state.
     %%
     %% - Verify that the acknowledge is correct
     %% - Change state to 'acknowledging_verify_connect'
     %%
+
+    ?DBG_PEER_HS(">>|| [~w] connecting ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #command_header{
       channel_id = ChannelID,
       reliable_sequence_number = SequenceNr
@@ -307,6 +312,8 @@ connecting(cast, {incoming_command, _SentTime, {H, #acknowledge{}}}, S) ->
     {next_state, acknowledging_verify_connect, S, [CanceledTimeout]};
 
 connecting(cast, {incoming_command, SentTime, {H, C = #verify_connect{}}}, S) ->
+    ?DBG_PEER_HS(">>|| [~w] connecting ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #command_header{
       channel_id = ChannelID,
       reliable_sequence_number = SequenceNr
@@ -328,6 +335,8 @@ connecting({timeout, {ChannelID, SequenceNr}}, Data, S) ->
     %% - Reset the send-timer
     %%
 
+    ?DBG_PEER_HS(">>|| [~w] connecting timeout ChID/SeqNr=~w ~n", [S#state.local_port, {ChannelID, SequenceNr}]),
+
     #state{
        host = Host,
        remote_ip = IP,
@@ -347,13 +356,112 @@ connecting(EventType, EventContent, S) ->
 
 
 %%%
+%%% Acknowledging Verify Connect state
+%%%
+
+acknowledging_verify_connect(enter, _OldState, S) ->
+    {keep_state, S};
+
+acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_connect{}}}, S) ->
+    %%
+    %% Received a Verify Connect command in the 'acknowledging_verify_connect'
+    %% state.
+    %%
+    %% - Verify that the data is correct
+    %% - Add the remote peer ID to the Peer Table
+    %% - Notify worker that we are connected
+    %% - Change state to 'connected'
+    %%
+
+    %%
+    %% TODO: Calculate and validate Session IDs
+    %%
+
+    ?DBG_PEER_HS(">>|| [~w] acknowledging_verify_connect ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
+    #state{
+      host = Host,
+      remote_ip = FromIP,
+      remote_port = Port,
+      channel_count = LocalChannelCount,
+      mtu = LocalMTU,
+      window_size = LocalWindowSize
+    } = S,
+
+    #verify_connect{
+       outgoing_peer_id             = RemotePeerID,
+       incoming_session_id          = IncomingSessionID,
+       outgoing_session_id          = OutgoingSessionID,
+       mtu                          = _RemoteMTU,
+       window_size                  = _RemoteWindowSize,
+       channel_count                = RemoteChannelCount,
+       incoming_bandwidth           = IncomingBandwidth,
+       outgoing_bandwidth           = OutgoingBandwidth,
+       packet_throttle_interval     = ThrottleInterval,
+       packet_throttle_acceleration = ThrottleAcceleration,
+       packet_throttle_deceleration = ThrottleDeceleration,
+       connect_id                   = ConnectID
+      } = C,
+
+    case S of
+        #state{
+           %% ---
+           %% Fields below are matched against the values received in
+           %% the Verify Connect command.
+           %% ---
+           packet_throttle_interval     = ThrottleInterval,
+           packet_throttle_acceleration = ThrottleAcceleration,
+           packet_throttle_deceleration = ThrottleDeceleration,
+           connect_id                   = ConnectID
+           %% ---
+          } when
+          RemoteChannelCount >= ?MIN_CHANNEL_COUNT,
+          RemoteChannelCount =< ?MAX_CHANNEL_COUNT
+          ->
+            ChannelCountSet = min(LocalChannelCount, RemoteChannelCount),
+
+            MTU1 = enet_command:clamp(C#verify_connect.mtu, ?MAX_MTU, ?MIN_MTU),
+            MTUSet = min(MTU1, LocalMTU),
+
+            WindowSize1 = enet_command:clamp(C#verify_connect.window_size, ?MIN_WINDOW_SIZE, ?MAX_WINDOW_SIZE),
+            WindowSizeSet = min(WindowSize1, LocalWindowSize),
+
+            {AckH, AckC} = enet_command:acknowledge(H, SentTime),
+            ?DBG_PEER_HS("<<|| [~w] acknowledging_verify_connect AckAfter: ~s ~w ~n", [S#state.local_port, enet_command:command_name(AckH), {AckH, AckC}]),
+
+            HBin = enet_protocol_encode:command_header(AckH),
+            CBin = enet_protocol_encode:command(AckC),
+            Data = [HBin, CBin],
+            {sent_time, _AckSentTime} =
+                enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, FromIP, Port, RemotePeerID),
+
+            NewS = S#state{
+              channel_count = ChannelCountSet,
+              remote_peer_id = RemotePeerID,
+              incoming_session_id = IncomingSessionID,
+              outgoing_session_id = OutgoingSessionID,
+              mtu = MTUSet,
+              window_size = WindowSizeSet,
+              incoming_bandwidth = IncomingBandwidth,
+              outgoing_bandwidth = OutgoingBandwidth
+            },
+            {next_state, connected, NewS};
+        _Mismatch ->
+            {stop, connect_verification_failed, S}
+    end;
+
+acknowledging_verify_connect(EventType, EventContent, S) ->
+    handle_event(EventType, EventContent, S).
+
+
+%%%
 %%% Acknowledging Connect state
 %%%
 
 acknowledging_connect(enter, _OldState, S) ->
     {keep_state, S};
 
-acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}}, S) ->
+acknowledging_connect(cast, {incoming_command, _SentTime, {H, C = #connect{}}}, S) ->
     %%
     %% Received a Connect command.
     %%
@@ -361,6 +469,8 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
     %% - Send a VerifyConnect command (use peer ID)
     %% - Start in the 'verifying_connect' state
     %%
+
+    ?DBG_PEER_HS(">>|| [~w] acknowledging_connect ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
 
     #state{
        host = Host,
@@ -417,6 +527,9 @@ acknowledging_connect(cast, {incoming_command, _SentTime, {_H, C = #connect{}}},
                                          PacketThrottleDeceleration,
                                          ConnectID,
                                          SequenceNr),
+
+              ?DBG_PEER_HS("<<|| [~w] acknowledging_connect ~s ~w ~n", [S#state.local_port, enet_command:command_name(VCH), {VCH, VCC}]),
+
               HBin = enet_protocol_encode:command_header(VCH),
               CBin = enet_protocol_encode:command(VCC),
               Data = [HBin, CBin],
@@ -456,101 +569,6 @@ acknowledging_connect(EventType, EventContent, S) ->
 
 
 %%%
-%%% Acknowledging Verify Connect state
-%%%
-
-acknowledging_verify_connect(enter, _OldState, S) ->
-    {keep_state, S};
-
-acknowledging_verify_connect(cast, {incoming_command, SentTime, {H, C = #verify_connect{}}}, S) ->
-    %%
-    %% Received a Verify Connect command in the 'acknowledging_verify_connect'
-    %% state.
-    %%
-    %% - Verify that the data is correct
-    %% - Add the remote peer ID to the Peer Table
-    %% - Notify worker that we are connected
-    %% - Change state to 'connected'
-    %%
-
-    %%
-    %% TODO: Calculate and validate Session IDs
-    %%
-
-    #state{
-      host = Host,
-      remote_ip = FromIP,
-      remote_port = Port,
-      channel_count = LocalChannelCount,
-      mtu = LocalMTU,
-      window_size = LocalWindowSize
-    } = S,
-
-    #verify_connect{
-       outgoing_peer_id             = RemotePeerID,
-       incoming_session_id          = IncomingSessionID,
-       outgoing_session_id          = OutgoingSessionID,
-       mtu                          = _RemoteMTU,
-       window_size                  = _RemoteWindowSize,
-       channel_count                = RemoteChannelCount,
-       incoming_bandwidth           = IncomingBandwidth,
-       outgoing_bandwidth           = OutgoingBandwidth,
-       packet_throttle_interval     = ThrottleInterval,
-       packet_throttle_acceleration = ThrottleAcceleration,
-       packet_throttle_deceleration = ThrottleDeceleration,
-       connect_id                   = ConnectID
-      } = C,
-
-    case S of
-        #state{
-           %% ---
-           %% Fields below are matched against the values received in
-           %% the Verify Connect command.
-           %% ---
-           packet_throttle_interval     = ThrottleInterval,
-           packet_throttle_acceleration = ThrottleAcceleration,
-           packet_throttle_deceleration = ThrottleDeceleration,
-           connect_id                   = ConnectID
-           %% ---
-          } when
-          RemoteChannelCount >= ?MIN_CHANNEL_COUNT,
-          RemoteChannelCount =< ?MAX_CHANNEL_COUNT
-          ->
-            ChannelCountSet = min(LocalChannelCount, RemoteChannelCount),
-
-            MTU1 = enet_command:clamp(C#verify_connect.mtu, ?MAX_MTU, ?MIN_MTU),
-            MTUSet = min(MTU1, LocalMTU),
-
-            WindowSize1 = enet_command:clamp(C#verify_connect.window_size, ?MIN_WINDOW_SIZE, ?MAX_WINDOW_SIZE),
-            WindowSizeSet = min(WindowSize1, LocalWindowSize),
-
-            {AckH, AckC} = enet_command:acknowledge(H, SentTime),
-            HBin = enet_protocol_encode:command_header(AckH),
-            CBin = enet_protocol_encode:command(AckC),
-            Data = [HBin, CBin],
-            {sent_time, _AckSentTime} =
-                enet_host:send_outgoing_commands(Host, Data, ConnectID, OutgoingSessionID, FromIP, Port, RemotePeerID),
-
-            NewS = S#state{
-              channel_count = ChannelCountSet,
-              remote_peer_id = RemotePeerID,
-              incoming_session_id = IncomingSessionID,
-              outgoing_session_id = OutgoingSessionID,
-              mtu = MTUSet,
-              window_size = WindowSizeSet,
-              incoming_bandwidth = IncomingBandwidth,
-              outgoing_bandwidth = OutgoingBandwidth
-            },
-            {next_state, connected, NewS};
-        _Mismatch ->
-            {stop, connect_verification_failed, S}
-    end;
-
-acknowledging_verify_connect(EventType, EventContent, S) ->
-    handle_event(EventType, EventContent, S).
-
-
-%%%
 %%% Verifying Connect state
 %%%
 
@@ -565,6 +583,9 @@ verifying_connect(cast, {incoming_command, _SentTime, {H, C = #acknowledge{}}}, 
     %% - Notify worker that a new peer has been connected
     %% - Change to 'connected' state
     %%
+
+    ?DBG_PEER_HS(">>|| [~w] verifying_connect ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #command_header{ channel_id = ChannelID } = H,
     #acknowledge{
        received_reliable_sequence_number = SequenceNumber,
@@ -625,21 +646,27 @@ connected(enter, _OldState, S) ->
             {keep_state, NewS, [SendTimeout, RecvTimeout]}
     end;
 
-connected(cast, {incoming_command, _SentTime, {_H, #verify_connect{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C=#verify_connect{}}}, S) ->
     %%
     %% Received VERYFY_CONNECT again.
     %%
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
-connected(cast, {incoming_command, _SentTime, {_H, #ping{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C=#ping{}}}, S) ->
     %%
     %% Received PING.
     %%
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
@@ -650,6 +677,9 @@ connected(cast, {incoming_command, _SentTime, {H, C = #acknowledge{}}}, S) ->
     %% - Verify that the acknowledge is correct
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #command_header{ channel_id = ChannelID } = H,
     #acknowledge{
        received_reliable_sequence_number = SequenceNumber,
@@ -659,13 +689,16 @@ connected(cast, {incoming_command, _SentTime, {H, C = #acknowledge{}}}, S) ->
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [CanceledTimeout, RecvTimeout]};
 
-connected(cast, {incoming_command, _SentTime, {_H, C = #bandwidth_limit{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C = #bandwidth_limit{}}}, S) ->
     %%
     %% Received Bandwidth Limit command.
     %%
     %% - Set bandwidth limit
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #bandwidth_limit{
        incoming_bandwidth = IncomingBandwidth,
        outgoing_bandwidth = OutgoingBandwidth
@@ -687,13 +720,16 @@ connected(cast, {incoming_command, _SentTime, {_H, C = #bandwidth_limit{}}}, S) 
     RecvTimeout = reset_recv_timer(),
     {keep_state, NewS, [RecvTimeout]};
 
-connected(cast, {incoming_command, _SentTime, {_H, C = #throttle_configure{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C = #throttle_configure{}}}, S) ->
     %%
     %% Received Throttle Configure command.
     %%
     %% - Set throttle configuration
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #throttle_configure{
        packet_throttle_interval = Interval,
        packet_throttle_acceleration = Acceleration,
@@ -714,6 +750,9 @@ connected(cast, {incoming_command, _SentTime, {H, C = #unsequenced{}}}, S) ->
     %% - Forward the command to the relevant channel
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #command_header{ channel_id = ChannelID } = H,
     #state{ channels = #{ ChannelID := Channel } } = S,
     ok = enet_channel:recv_unsequenced(Channel, {H, C}),
@@ -727,6 +766,9 @@ connected(cast, {incoming_command, _SentTime, {H, C = #unreliable{}}}, S) ->
     %% - Forward the command to the relevant channel
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #command_header{ channel_id = ChannelID } = H,
     #state{ channels = #{ ChannelID := Channel } } = S,
     ok = enet_channel:recv_unreliable(Channel, {H, C}),
@@ -740,6 +782,9 @@ connected(cast, {incoming_command, _SentTime, {H, C = #fragment{}}}, S) ->
     %% - Forward the command to the relevant channel
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #command_header{ channel_id = ChannelID } = H,
     #state{ channels = #{ ChannelID := Channel } } = S,
     ok = enet_channel:recv_reliable(Channel, {H, C}),
@@ -753,19 +798,25 @@ connected(cast, {incoming_command, _SentTime, {H, C = #reliable{}}}, S) ->
     %% - Forward the command to the relevant channel
     %% - Reset the receive-timer
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #command_header{ channel_id = ChannelID } = H,
     #state{ channels = #{ ChannelID := Channel } } = S,
     ok = enet_channel:recv_reliable(Channel, {H, C}),
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
 
-connected(cast, {incoming_command, _SentTime, {_H, #disconnect{}}}, S) ->
+connected(cast, {incoming_command, _SentTime, {H, C=#disconnect{}}}, S) ->
     %%
     %% Received Disconnect command.
     %%
     %% - Notify worker application
     %% - Stop
     %%
+
+    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #state{
        worker = Worker,
        local_port = LocalPort,
@@ -815,6 +866,9 @@ connected(cast, {outgoing_command, {H, C = #unreliable{}}}, S) ->
     %% - Forward the encoded command to the host
     %% - Reset the send-timer
     %%
+
+    ?DBG_PEER("<< [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #state{
        host = Host,
        remote_ip = IP,
@@ -832,8 +886,8 @@ connected(cast, {outgoing_command, {H, C = #unreliable{}}}, S) ->
     {keep_state, S, [SendTimeout]};
 
 connected(cast, {send_reliable_outgoing_commands, Commands}, S) ->
-    lists:foreach(fun(Cmd) ->
-      enet_peer:send_command(self(), Cmd)
+    lists:foreach(fun({H, C}) ->
+      enet_peer:send_command(self(), {H, C})
     end, Commands),
 
     {keep_state, S};
@@ -845,6 +899,9 @@ connected(cast, {outgoing_command, {H, C = #reliable{}}}, S) ->
     %% - Forward the encoded command to the host
     %% - Reset the send-timer
     %%
+
+    ?DBG_PEER("<< [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #state{
        host = Host,
        remote_ip = IP,
@@ -875,6 +932,9 @@ connected(cast, {outgoing_command, {H, C = #fragment{}}}, S) ->
     %% - Forward the encoded command to the host
     %% - Reset the send-timer
     %%
+
+    ?DBG_PEER("<< [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+
     #state{
        host = Host,
        remote_ip = IP,
@@ -913,7 +973,10 @@ connected(cast, disconnect, State) ->
        outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
       } = State,
+
     {H, C} = enet_command:sequenced_disconnect(),
+    ?DBG_PEER("<< [~w] connected ~s ~w ~n", [State#state.local_port, enet_command:command_name(H), {H, C}]),
+
     HBin = enet_protocol_encode:command_header(H),
     CBin = enet_protocol_encode:command(C),
     Data = [HBin, CBin],
@@ -1085,6 +1148,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %% - Send the command to self for handling
               %%
 
+              % ?DBG_PEER(">> [~w] ~w ~n", [S#state.local_port, {H, C}]),
 
               gen_statem:cast(self(), {incoming_command, SentTime, {H, C}});
           ({H = #command_header{ please_acknowledge = 1 }, C}) ->
@@ -1095,6 +1159,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               %% - Send the command to self for handling
               %%
 
+              % ?DBG_PEER(">> [~w] ~w ~n", [S#state.local_port, {H, C}]),
 
               {AckNow, RemotePeerID} =
                   case C of
@@ -1106,6 +1171,8 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               case AckNow of
                 true ->
                   {AckH, AckC} = enet_command:acknowledge(H, SentTime),
+                  ?DBG_PEER("<< [~w] AckNow: ~w ~n", [S#state.local_port, {AckH, AckC}]),
+
                   HBin = enet_protocol_encode:command_header(AckH),
                   CBin = enet_protocol_encode:command(AckC),
                   Data = [HBin, CBin],
