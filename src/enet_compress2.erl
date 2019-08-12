@@ -477,24 +477,33 @@ enet_range_coder_decode_loop1(EnetRcDecVars, Payload) ->
 
 enet_symbol_rescale(EnetRcDecVars, SymbolIdx, Total) ->
   Symbol = orddict:fetch(SymbolIdx, EnetRcDecVars#enet_rc_dec_vars.symbols),
-  Count1 = Symbol#enet_symbol.count - (Symbol#enet_symbol.count bsr 1),
+  Count1 = Symbol#enet_symbol.count - ((Symbol#enet_symbol.count) bsr 1),
   Symbol1 = Symbol#enet_symbol{count = Count1, under = Count1},
+
+  Symbols1 = orddict:update(SymbolIdx, fun(_OldSymbol) -> Symbol1 end, EnetRcDecVars#enet_rc_dec_vars.symbols),
+  EnetRcDecVars_10 = EnetRcDecVars#enet_rc_dec_vars{symbols = Symbols1},
+  Symbol20 = orddict:fetch(20, EnetRcDecVars_10#enet_rc_dec_vars.symbols),
   {EnetRcDecVars1, Under1} = if
     Symbol1#enet_symbol.left /= 0 ->
-      Symbols1 = orddict:update(SymbolIdx, fun(_OldSymbol) -> Symbol1 end, EnetRcDecVars#enet_rc_dec_vars.symbols),
-      EnetRcDecVars_1 = EnetRcDecVars#enet_rc_dec_vars{symbols = Symbols1},
-      enet_symbol_rescale(EnetRcDecVars_1, SymbolIdx + Symbol1#enet_symbol.left, Total);
+      Under11 = Symbol1#enet_symbol.under,
+      {EnetRcDecVars12, Total12} = enet_symbol_rescale(EnetRcDecVars_10, SymbolIdx + Symbol1#enet_symbol.left, 0),
+      Symbol12 = Symbol1#enet_symbol{under = Under11 + Total12},
+      Symbols12 = orddict:update(SymbolIdx, fun(_OldSymbol) -> Symbol12 end, EnetRcDecVars12#enet_rc_dec_vars.symbols),
+      EnetRcDecVars121 = EnetRcDecVars12#enet_rc_dec_vars{symbols = Symbols12},
+
+      {EnetRcDecVars121, Under11 + Total12};
     true ->
-      {EnetRcDecVars, 0}
+      {EnetRcDecVars_10, Count1}
   end,
   Total1 = Total + Under1,
-  Symbol2 = Symbol1#enet_symbol{under = Symbol1#enet_symbol.under + Under1},
+  % Symbol2 = Symbol1#enet_symbol{under = Symbol1#enet_symbol.under + Under1},
   {EnetRcDecVars2, Total2} = if
-    Symbol2#enet_symbol.right == 0 ->
+    Symbol1#enet_symbol.right == 0 ->
       {EnetRcDecVars1, Total1};
     true ->
-      enet_symbol_rescale(EnetRcDecVars1, SymbolIdx + Symbol2#enet_symbol.right, Total1)
+      enet_symbol_rescale(EnetRcDecVars1, SymbolIdx + Symbol1#enet_symbol.right, Total1)
   end,
+
   {EnetRcDecVars2, Total2}.
 
 
@@ -640,7 +649,7 @@ enet_context_decode_loop1(EnetRcDecVars, EnetRcDecLoop1Vars, Update, Minimum, Cr
               {EnetRcDecVars__1, EnetRcDecLoop1Vars__1} = enet_create_right(EnetRcDecVars, EnetRcDecLoop1Vars_1, Update, Minimum, After),
               {false, EnetRcDecVars__1, EnetRcDecLoop1Vars__1};
             _ ->
-              dont_Have_CreateRight
+              {false, EnetRcDecVars, EnetRcDecLoop1Vars_1}
           end
       end;
     true ->
@@ -662,7 +671,7 @@ enet_context_decode_loop1(EnetRcDecVars, EnetRcDecLoop1Vars, Update, Minimum, Cr
                   {EnetRcDecVars__1, EnetRcDecLoop1Vars__1} = enet_create_left(EnetRcDecVars_1, EnetRcDecLoop1Vars, Update, Minimum, After, Before),
                   {false, EnetRcDecVars__1, EnetRcDecLoop1Vars__1};
                 _ ->
-                  dont_Have_CreateRight
+                  {false, EnetRcDecVars_1, EnetRcDecLoop1Vars}
               end
           end;
         true ->
@@ -834,4 +843,5 @@ to_uint(Val, Size) ->
       Val
   end
   .
+
 
