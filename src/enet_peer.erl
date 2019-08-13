@@ -665,7 +665,7 @@ connected(cast, {incoming_command, _SentTime, {H, C=#ping{}}}, S) ->
     %% - Reset the receive-timer
     %%
 
-    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+    ?DBG_MISC(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
 
     RecvTimeout = reset_recv_timer(),
     {keep_state, S, [RecvTimeout]};
@@ -678,7 +678,7 @@ connected(cast, {incoming_command, _SentTime, {H, C = #acknowledge{}}}, S) ->
     %% - Reset the receive-timer
     %%
 
-    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+    ?DBG_MISC(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
 
     #command_header{ channel_id = ChannelID } = H,
     #acknowledge{
@@ -697,7 +697,7 @@ connected(cast, {incoming_command, _SentTime, {H, C = #bandwidth_limit{}}}, S) -
     %% - Reset the receive-timer
     %%
 
-    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+    ?DBG_MISC(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
 
     #bandwidth_limit{
        incoming_bandwidth = IncomingBandwidth,
@@ -728,7 +728,7 @@ connected(cast, {incoming_command, _SentTime, {H, C = #throttle_configure{}}}, S
     %% - Reset the receive-timer
     %%
 
-    ?DBG_PEER(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
+    ?DBG_MISC(">> [~w] connected ~s ~w ~n", [S#state.local_port, enet_command:command_name(H), {H, C}]),
 
     #throttle_configure{
        packet_throttle_interval = Interval,
@@ -1171,7 +1171,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
               case AckNow of
                 true ->
                   {AckH, AckC} = enet_command:acknowledge(H, SentTime),
-                  ?DBG_PEER("<< [~w] AckNow: ~w ~n", [S#state.local_port, {AckH, AckC}]),
+                  ?DBG_MISC("<< [~w] AckNow: ~w ~n", [S#state.local_port, {AckH, AckC}]),
 
                   HBin = enet_protocol_encode:command_header(AckH),
                   CBin = enet_protocol_encode:command(AckC),
