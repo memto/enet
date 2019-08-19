@@ -11,7 +11,7 @@
          start_link/4,
          socket_options/0,
          give_socket/2,
-         connect/4,
+         connect/5,
          send_outgoing_commands/6,
          send_outgoing_commands/7,
          get_port/1,
@@ -38,6 +38,7 @@
          socket,
          connect_fun,
          compressor,
+         transport = gen_udp,
          connect_id = undefined
         }).
 
@@ -56,8 +57,8 @@ give_socket(Host, Socket) ->
     ok = gen_udp:controlling_process(Socket, Host),
     gen_server:cast(Host, {give_socket, Socket}).
 
-connect(Host, RIP, RPort, ChannelCount) ->
-    gen_server:call(Host, {connect, RIP, RPort, ChannelCount}).
+connect(Host, RIP, RPort, ChannelCount, Proxy) ->
+    gen_server:call(Host, {connect, RIP, RPort, ChannelCount, Proxy}).
 
 send_outgoing_commands(Host, Commands, ConnectID, SessionID, RIP, RPort) ->
     send_outgoing_commands(Host, Commands, ConnectID, SessionID, RIP, RPort, ?NULL_PEER_ID).
@@ -128,7 +129,7 @@ init({AssignedPort, ConnectFun, Commpressor, Options}) ->
     end.
 
 
-handle_call({connect, IP, Port, Channels}, _From, S) ->
+handle_call({connect, IP, Port, Channels, undefined}, _From, S) ->
     %%
     %% Connect to a remote peer.
     %%
@@ -158,7 +159,42 @@ handle_call({connect, IP, Port, Channels}, _From, S) ->
             error:pool_full -> {error, reached_peer_limit};
             error:exists    -> {error, exists}
         end,
-    {reply, Reply, S};
+    {reply, Reply, S#state{transport=gen_udp}};
+
+
+handle_call({connect, IP, Port, Channels, Proxy}, _From, S) ->
+    %%
+    %% Connect to a remote peer.
+    %%
+    %% - Add a peer to the pool
+    %% - Start the peer process
+    %%
+    #state{
+       connect_fun = ConnectFun,
+       socket = Socket
+      } = S,
+    Ref = make_ref(),
+    LPort = get_port(self()),
+    {ok, Socket2} = socks5_udp:connect(IP, Port, Socket, Proxy),
+    Reply =
+        try enet_pool:add_peer(LPort, Ref) of
+            PeerID ->
+                Peer = #enet_peer{
+                          handshake_flow = local,
+                          local_peer_id = PeerID,
+                          remote_ip = IP,
+                          remote_port = Port,
+                          name = Ref,
+                          host = self(),
+                          channels = Channels,
+                          connect_fun = ConnectFun
+                         },
+                start_peer(Peer)
+        catch
+            error:pool_full -> {error, reached_peer_limit};
+            error:exists    -> {error, exists}
+        end,
+    {reply, Reply, S#state{transport=socks5_udp, socket=Socket2}};
 
 handle_call({send_outgoing_commands, Commands, ConnectID, SessionID, RIP, RPort, RPeerID}, _From, S) ->
     %%
@@ -171,6 +207,11 @@ handle_call({send_outgoing_commands, Commands, ConnectID, SessionID, RIP, RPort,
     %%
 
     SentTime = get_time(),
+
+    #state{
+       socket = Socket,
+       transport = Transport
+      } = S,
 
     PH = if
       RPeerID < ?MAX_PEER_ID ->
@@ -211,7 +252,7 @@ handle_call({send_outgoing_commands, Commands, ConnectID, SessionID, RIP, RPort,
     end,
 
     Packet = [PH_Checksum, Commands],
-    ok = gen_udp:send(S#state.socket, RIP, RPort, Packet),
+    ok = Transport:send(Socket, RIP, RPort, Packet),
 
     {reply, {sent_time, SentTime}, S#state{connect_id=ConnectID}}.
 
@@ -232,7 +273,7 @@ handle_cast(_Msg, State) ->
 %%% handle_info
 %%%
 
-handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
+handle_info({udp, Socket, RIP, RPort, Packet}, #state{transport = gen_udp} = S) ->
     %%
     %% Received a UDP packet.
     %%
@@ -331,6 +372,107 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
     end,
     {noreply, S};
 
+handle_info({udp, _Socket, RIP, RPort, Packet}, S) ->
+    %%
+    %% Received a UDP packet.
+    %%
+    %% - Unpack the ENet protocol header
+    %% - Decompress the remaining packet if necessary
+    %% - Send the packet to the peer (ID in protocol header)
+    %%
+
+
+    #state{
+       connect_fun = ConnectFun,
+       compressor = #enet_compressor{
+        context = Context,
+        compress = _CompressFun,
+        decompress = DecompressFun,
+        destroy = _DestroyFun
+       },
+       connect_id = ConnectID,
+       transport = Transport
+      } = S,
+    %% TODO: Replace call to enet_protocol_decode with binary pattern match.
+
+    Packet1 = Transport:remove_header(Packet),
+
+    {ok,
+     #protocol_header{
+        compressed = IsCompressed,
+        peer_id = LPeerID,
+        sent_time = SentTime
+       }=PH,
+     Rest1} = enet_protocol_decode:protocol_header(Packet1),
+
+    Rest = case ?CRC32 of
+      false ->
+        Rest1;
+      true ->
+        <<_:32, Rest2/binary>> = Rest1,
+        Rest2
+    end,
+
+
+    Commands =
+        case IsCompressed of
+            0 -> Rest;
+            1 ->
+              {ok, Out} = start_compressor(DecompressFun, Context, Rest),
+              Out
+        end,
+
+    _Checksum_ok = case ?CRC32 of
+      true ->
+        <<RemoteChecksum:32, _/binary>> = Rest1,
+
+        PHBin = enet_protocol_encode:protocol_header(PH),
+        Payload = case LPeerID of
+          ?MAX_PEER_ID ->
+            <<PHBin/binary, 0:32, Commands/binary>>;
+          _ ->
+            <<PHBin/binary, ConnectID:32, Commands/binary>>
+        end,
+        Checksum = erlang:crc32(Payload),
+
+        Checksum == RemoteChecksum;
+      false ->
+        true
+    end,
+
+    LPort = get_port(self()),
+    case LPeerID of
+        ?MAX_PEER_ID ->
+            %% No particular peer is the receiver of this packet.
+            %% Create a new peer.
+            Ref = make_ref(),
+            try enet_pool:add_peer(LPort, Ref) of
+                PeerID ->
+                  Peer = #enet_peer{
+                            handshake_flow = remote,
+                            local_peer_id = PeerID,
+                            remote_ip = RIP,
+                            remote_port = RPort,
+                            name = Ref,
+                            host = self(),
+                            connect_fun = ConnectFun
+                           },
+                  {ok, Pid} = start_peer(Peer),
+
+                  enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
+            catch
+                error:pool_full -> {error, reached_peer_limit};
+                error:exists    -> {error, exists}
+            end;
+        LPeerID ->
+            case enet_pool:pick_peer(LPort, LPeerID) of
+                false -> ok; %% Unknown peer - drop the packet
+                Pid ->
+                  enet_peer:recv_incoming_packet(Pid, RIP, SentTime, Commands)
+            end
+    end,
+    {noreply, S};
+
 handle_info({gproc, unreg, _Ref, {n, l, {enet_peer, Ref}}}, S) ->
     %%
     %% A Peer process has exited.
@@ -346,8 +488,8 @@ handle_info({gproc, unreg, _Ref, {n, l, {enet_peer, Ref}}}, S) ->
 %%% terminate
 %%%
 
-terminate(_Reason, S) ->
-    ok = gen_udp:close(S#state.socket).
+terminate(_Reason, #state{socket = Socket, transport = Transport}) ->
+    ok = Transport:close(Socket).
 
 
 %%%
