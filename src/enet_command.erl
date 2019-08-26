@@ -190,6 +190,7 @@ send_unreliable(ChannelID, ReliableSequenceNumber, SequenceNumber, Data) ->
 send_reliable(ChannelID, ReliableSequenceNumber, Data) ->
     {
       #command_header{
+         please_acknowledge = 1,
          command = ?COMMAND_SEND_RELIABLE,
          channel_id = ChannelID,
          reliable_sequence_number = ReliableSequenceNumber
@@ -202,6 +203,7 @@ send_reliable(ChannelID, ReliableSequenceNumber, Data) ->
 send_fragment(ChannelID, ReliableSequenceNumber, StartSN, DataLen, FragCnt, FragNum, TotalLen, FragOff, Data) ->
     {
       #command_header{
+         please_acknowledge = 1,
          command = ?COMMAND_SEND_FRAGMENT,
          channel_id = ChannelID,
          reliable_sequence_number = ReliableSequenceNumber
