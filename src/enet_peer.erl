@@ -58,6 +58,8 @@
          packet_throttle_interval = ?PEER_PACKET_THROTTLE_INTERVAL,
          packet_throttle_acceleration = ?PEER_PACKET_THROTTLE_ACCELERATION,
          packet_throttle_deceleration = ?PEER_PACKET_THROTTLE_DECELERATION,
+         roundTripTime = ?PEER_DEFAULT_ROUND_TRIP_TIME,
+         roundTripTimeVariance = 0,
          outgoing_reliable_sequence_number = 1,
          incoming_unsequenced_group = 0,
          outgoing_unsequenced_group = 1,
@@ -687,7 +689,10 @@ connected(cast, {incoming_command, _SentTime, {H, C = #acknowledge{}}}, S) ->
       } = C,
     CanceledTimeout = cancel_resend_timer(ChannelID, SentTime, SequenceNumber),
     RecvTimeout = reset_recv_timer(),
-    {keep_state, S, [CanceledTimeout, RecvTimeout]};
+
+    {PRoundTripTime, PRoundTripTimeVariance} = calc_roundTripTime(SentTime, S),
+
+    {keep_state, S#state{roundTripTime = PRoundTripTime, roundTripTimeVariance = PRoundTripTimeVariance}, [CanceledTimeout, RecvTimeout]};
 
 connected(cast, {incoming_command, _SentTime, {H, C = #bandwidth_limit{}}}, S) ->
     %%
@@ -919,9 +924,11 @@ connected(cast, {outgoing_command, {H, C = #reliable{}}}, S) ->
     Data = [HBin, CBin],
     {sent_time, SentTime} =
         enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
+    RoundTripTimeout = S#state.roundTripTime + 4 * S#state.roundTripTimeVariance,
+    ?DBG_RESENT("send #reliable RoundTripTimeout=~w ~n", [RoundTripTimeout]),
     SendReliableTimeout =
         make_resend_timer(
-          ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
+          ChannelID, SentTime, SequenceNr, RoundTripTimeout, {Data, RoundTripTimeout}),
     SendTimeout = reset_send_timer(),
     {keep_state, S, [SendReliableTimeout, SendTimeout]};
 
@@ -952,9 +959,11 @@ connected(cast, {outgoing_command, {H, C = #fragment{}}}, S) ->
     Data = [HBin, CBin],
     {sent_time, SentTime} =
         enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
+    RoundTripTimeout = S#state.roundTripTime + 4 * S#state.roundTripTimeVariance,
+    ?DBG_RESENT("send #fragment RoundTripTimeout=~w ~n", [RoundTripTimeout]),
     SendReliableTimeout =
         make_resend_timer(
-          ChannelID, SentTime, SequenceNr, ?PEER_TIMEOUT_MINIMUM, Data),
+          ChannelID, SentTime, SequenceNr, RoundTripTimeout, {Data, RoundTripTimeout}),
     SendTimeout = reset_send_timer(),
     {keep_state, S, [SendReliableTimeout, SendTimeout]};
 
@@ -991,6 +1000,35 @@ connected(cast, disconnect_now, State) ->
     %%
     {stop, normal, State};
 
+connected({timeout, {ChannelID, SentTime, SequenceNr}}, {Data, RoundTripTimeout}, S) ->
+    %%
+    %% A resend-timer was triggered.
+    %%
+    %% - TODO: Keep track of number of resends
+    %% - Resend the associated command
+    %% - Reset the resend-timer
+    %% - Reset the send-timer
+    %%
+
+    #state{
+       host = Host,
+       remote_ip = IP,
+       remote_port = Port,
+       connect_id = ConnectID,
+       outgoing_session_id = SessionID,
+       remote_peer_id = RemotePeerID
+      } = S,
+
+    ?DBG_RESENT("<< [~w] connected resendxx ~w ~n", [S#state.local_port, {ChannelID, SentTime, SequenceNr}]),
+
+    {sent_time, NewSentTime} = enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
+    NewRoundTripTimeout = RoundTripTimeout*2,
+    NewTimeout =
+        make_resend_timer(
+          ChannelID, NewSentTime, SequenceNr, NewRoundTripTimeout, {Data, NewRoundTripTimeout}),
+    SendTimeout = reset_send_timer(),
+    {keep_state, S, [NewTimeout, SendTimeout]};
+
 connected({timeout, {ChannelID, SentTime, SequenceNr}}, Data, S) ->
     %%
     %% A resend-timer was triggered.
@@ -1009,6 +1047,9 @@ connected({timeout, {ChannelID, SentTime, SequenceNr}}, Data, S) ->
        outgoing_session_id = SessionID,
        remote_peer_id = RemotePeerID
       } = S,
+
+    ?DBG_RESENT("<< [~w] connected resend ~w ~n", [S#state.local_port, {ChannelID, SentTime, SequenceNr}]),
+
     enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID),
     NewTimeout =
         make_resend_timer(
@@ -1238,3 +1279,41 @@ start_worker({Module, Fun, Args}, PeerInfo) ->
     erlang:apply(Module, Fun, [PeerInfo] ++ Args);
 start_worker(ConnectFun, PeerInfo) ->
     ConnectFun(PeerInfo).
+
+calc_roundTripTime(SentTime, S) ->
+  ServiceTime = get_time(),
+  ReceivedSentTime1 = SentTime bor (ServiceTime band 16#FFFF0000),
+  ReceivedSentTime = if
+    (ReceivedSentTime1 band 16#8000) > (ServiceTime band 16#8000) ->
+      ReceivedSentTime1 - 16#10000;
+    true ->
+      ReceivedSentTime1
+  end,
+
+  if
+    ?ENET_TIME_LESS(ServiceTime, ReceivedSentTime) ->
+      ?DBG_RESENT("?ENET_TIME_LESS(ServiceTime, ReceivedSentTime) FAILED ~n");
+    true ->
+      ?DBG_RESENT("?ENET_TIME_LESS(ServiceTime, ReceivedSentTime) OK ~n")
+  end,
+
+  RoundTripTime = ?ENET_TIME_DIFFERENCE (ServiceTime, ReceivedSentTime),
+  ?DBG_RESENT("RoundTripTime ~w peer->roundTripTime ~w peer->roundTripTimeVariance ~w ~n", [RoundTripTime, S#state.roundTripTime, S#state.roundTripTimeVariance]),
+
+  PRoundTripTimeVariance1 = S#state.roundTripTimeVariance - (S#state.roundTripTimeVariance div 4),
+  {PRoundTripTime, PRoundTripTimeVariance} = if
+    RoundTripTime >= S#state.roundTripTime ->
+      PRoundTripTime11 = S#state.roundTripTime + ((RoundTripTime - S#state.roundTripTime) div 8),
+      PRoundTripTimeVariance12 = PRoundTripTimeVariance1 + ((RoundTripTime - PRoundTripTime11) div 4),
+      {PRoundTripTime11, PRoundTripTimeVariance12};
+    true ->
+      PRoundTripTime21 = S#state.roundTripTime - ((S#state.roundTripTime - RoundTripTime) div 8),
+      PRoundTripTimeVariance22 = PRoundTripTimeVariance1 + ((PRoundTripTime21 - RoundTripTime) div 4),
+      {PRoundTripTime21, PRoundTripTimeVariance22}
+  end,
+
+  {PRoundTripTime, PRoundTripTimeVariance}.
+
+get_time() ->
+    erlang:system_time(1000) band 16#FFFF.
+
