@@ -5,6 +5,7 @@
 -include("enet_commands.hrl").
 -include("enet_protocol.hrl").
 -include("enet_compress.hrl").
+-include("enet_helpers.hrl").
 
 %% API
 -export([
@@ -186,6 +187,8 @@ handle_call({send_outgoing_commands, Commands, ConnectID, SessionID, RIP, RPort,
          }
     end,
 
+    ?DBG_HOST("<< ~w ~n", [PH]),
+
     PH_Checksum = case ?CRC32 of
       false ->
         enet_protocol_encode:protocol_header(PH);
@@ -201,16 +204,20 @@ handle_call({send_outgoing_commands, Commands, ConnectID, SessionID, RIP, RPort,
         Payload =
         if
           (RPeerID < ?MAX_PEER_ID) ->
+            ?DBG_CHECKSUM("Checksum Remote Peer ConnectID=~w ~n", [ConnectID]),
             <<PHBin/binary, ConnectID:32, CommandsBin/binary>>;
           true ->
+            ?DBG_CHECKSUM("Checksum No Remote Peer ~n"),
             <<PHBin/binary, 0:32, CommandsBin/binary>>
         end,
 
+        ?DBG_CHECKSUM("Checksum input: ~w ~n", [Payload]),
         Checksum = erlang:crc32(Payload),
         <<PHBin/binary, Checksum:32>>
     end,
 
     Packet = [PH_Checksum, Commands],
+    ?DBG_PACKET("<< send udp ~w ~n", [Packet]),
     ok = gen_udp:send(S#state.socket, RIP, RPort, Packet),
 
     {reply, {sent_time, SentTime}, S#state{connect_id=ConnectID}}.
@@ -255,6 +262,8 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
       } = S,
     %% TODO: Replace call to enet_protocol_decode with binary pattern match.
 
+    ?DBG_PACKET(">> revc udp: ~w ~n", [Packet]),
+
     {ok,
      #protocol_header{
         compressed = IsCompressed,
@@ -262,6 +271,8 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
         sent_time = SentTime
        }=PH,
      Rest1} = enet_protocol_decode:protocol_header(Packet),
+
+    ?DBG_HOST("~n>> ~w ~n", [PH]),
 
     Rest = case ?CRC32 of
       false ->
@@ -293,6 +304,8 @@ handle_info({udp, Socket, RIP, RPort, Packet}, S) ->
         end,
         Checksum = erlang:crc32(Payload),
 
+        ?DBG_CHECKSUM("Checksum input: ~w ~n", [Payload]),
+        ?DBG_CHECKSUM("Checksum/RemoteChecksum: ~w/~w  LPeerID/ConnectID=~w/~w ~n", [Checksum, RemoteChecksum, LPeerID, ConnectID]),
         Checksum == RemoteChecksum;
       false ->
         true
