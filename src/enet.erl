@@ -6,6 +6,7 @@
          start_host/4,
          stop_host/1,
          connect_peer/4,
+         connect_peer/5,
          await_connect/0,
          disconnect_peer/1,
          disconnect_peer_now/1,
@@ -56,8 +57,11 @@ stop_host(HostPort) ->
                           {ok, pid()} | {error, atom()}.
 
 connect_peer(HostPort, IP, RemotePort, ChannelCount) ->
+  connect_peer(HostPort, IP, RemotePort, ChannelCount, undefined).
+
+connect_peer(HostPort, IP, RemotePort, ChannelCount, Proxy) ->
     Host = gproc:where({n, l, {enet_host, HostPort}}),
-    enet_host:connect(Host, IP, RemotePort, ChannelCount).
+    enet_host:connect(Host, IP, RemotePort, ChannelCount, Proxy).
 
 
 await_connect() ->
