@@ -23,7 +23,7 @@
          calculate_session_id/2
         ]).
 
-command_name(CmdNum) ->
+command_name(CmdHd) ->
   CommandNames = #{
       1 => "COMMAND_ACKNOWLEDGE"             ,
       2 => "COMMAND_CONNECT"                 ,
@@ -38,7 +38,7 @@ command_name(CmdNum) ->
      11 => "COMMAND_THROTTLE_CONFIGURE"      ,
      12 => "COMMAND_SEND_UNRELIABLE_FRAGMENT"
   },
-  maps:get(CmdNum, CommandNames).
+  maps:get(CmdHd#command_header.command, CommandNames).
 
 acknowledge(H = #command_header{}, SentTime) ->
     #command_header{
@@ -190,6 +190,7 @@ send_unreliable(ChannelID, ReliableSequenceNumber, SequenceNumber, Data) ->
 send_reliable(ChannelID, ReliableSequenceNumber, Data) ->
     {
       #command_header{
+         please_acknowledge = 1,
          command = ?COMMAND_SEND_RELIABLE,
          channel_id = ChannelID,
          reliable_sequence_number = ReliableSequenceNumber
@@ -202,6 +203,7 @@ send_reliable(ChannelID, ReliableSequenceNumber, Data) ->
 send_fragment(ChannelID, ReliableSequenceNumber, StartSN, DataLen, FragCnt, FragNum, TotalLen, FragOff, Data) ->
     {
       #command_header{
+         please_acknowledge = 1,
          command = ?COMMAND_SEND_FRAGMENT,
          channel_id = ChannelID,
          reliable_sequence_number = ReliableSequenceNumber
