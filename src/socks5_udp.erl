@@ -26,7 +26,7 @@ connect(Host, Port, UdpSocket, Opts) ->
   connect(Host, Port, UdpSocket, Opts, infinity).
 
 
-connect(Host, Port, UdpSocket, Opts, Timeout) when is_list(Host), is_integer(Port),
+connect(Host, Port, UdpSocket, Opts, Timeout) when (is_list(Host) orelse is_tuple(Host)), is_integer(Port),
                                         (Timeout =:= infinity orelse is_integer(Timeout)) ->
   %% get the proxy host and port from the options
   ProxyHost = proplists:get_value(socks5_host, Opts),
