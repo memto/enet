@@ -176,7 +176,12 @@ handle_call({connect, IP, Port, Channels, Proxy}, _From, S) ->
       } = S,
     Ref = make_ref(),
     LPort = get_port(self()),
-    {ok, Socket2} = socks5_udp:connect(IP, Port, Socket, Proxy),
+    Socket1 =
+      case Socket of
+        {_, UdpSocket, _, _} -> UdpSocket;
+        _ ->  Socket
+      end,
+    {ok, Socket2} = socks5_udp:connect(IP, Port, Socket1, Proxy),
     Reply =
         try enet_pool:add_peer(LPort, Ref) of
             PeerID ->
