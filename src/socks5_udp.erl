@@ -47,6 +47,8 @@ connect(Host, Port, UdpSocket, Opts, Timeout) when (is_list(Host) orelse is_tupl
           case UdpHost of
             {0, 0, 0, 0} ->
               {ok, {Socket, UdpSocket, ProxyHost, UdpPort}};
+            {0, 0, 0, 0, 0, 0, 0, 0} ->
+              {ok, {Socket, UdpSocket, ProxyHost, UdpPort}};
             _ ->
               {ok, {Socket, UdpSocket, UdpHost, UdpPort}}
           end;
