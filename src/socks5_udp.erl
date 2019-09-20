@@ -53,6 +53,7 @@ connect(Host, Port, UdpSocket, Opts, Timeout) when (is_list(Host) orelse is_tupl
               {ok, {Socket, UdpSocket, UdpHost, UdpPort}}
           end;
         Error ->
+          gen_udp:close(UdpSocket),
           gen_tcp:close(Socket),
           Error
       end;
