@@ -1166,7 +1166,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
+handle_event(cast, {incoming_packet, _FromIP, SentTime, Packet}, S) ->
     %%
     %% Received an incoming packet of commands.
     %%
@@ -1175,6 +1175,7 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
     %%
     #state{
       host = Host,
+      remote_ip = IP,
       remote_port = Port,
       connect_id = ConnectID,
       outgoing_session_id = SessionID
@@ -1218,14 +1219,14 @@ handle_event(cast, {incoming_packet, FromIP, SentTime, Packet}, S) ->
                   CBin = enet_protocol_encode:command(AckC),
                   Data = [HBin, CBin],
                   {sent_time, _AckSentTime} =
-                      enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, FromIP, Port, RemotePeerID);
+                      enet_host:send_outgoing_commands(Host, Data, ConnectID, SessionID, IP, Port, RemotePeerID);
                 _ -> ok
               end,
 
               gen_statem:cast(self(), {incoming_command, SentTime, {H, C}})
       end,
       Commands),
-    {keep_state, S#state{ remote_ip = FromIP }};
+    {keep_state, S};
 
 handle_event({call, From}, channels, S) ->
     {keep_state, S, [{reply, From, S#state.channels}]};
