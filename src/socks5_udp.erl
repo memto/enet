@@ -44,7 +44,12 @@ connect(Host, Port, UdpSocket, Opts, Timeout) when (is_list(Host) orelse is_tupl
     {ok, Socket} ->
       case do_handshake(Socket, Host, Port, Opts) of
         {ok, UdpHost, UdpPort} ->
-          {ok, {Socket, UdpSocket, UdpHost, UdpPort}};
+          case UdpHost of
+            {0, 0, 0, 0} ->
+              {ok, {Socket, UdpSocket, ProxyHost, UdpPort}};
+            _ ->
+              {ok, {Socket, UdpSocket, UdpHost, UdpPort}}
+          end;
         Error ->
           gen_tcp:close(Socket),
           Error
